@@ -1,4 +1,5 @@
 #include "concolic_search.h"
+#include "yices_solver.h"
 
 namespace crest{
 
@@ -59,16 +60,16 @@ namespace crest{
 
     /*tvn debug*/
     printf("branches_count %d ", max_function_);
-    cout << vec2str(branch_count_) << endl;
+    cout << container2str(branch_count_) << endl;
 
     printf("max_branch %d, branches ", max_branch_);
-    cout << vec2str(branches_) << endl;
+    cout << container2str(branches_) << endl;
 
     printf("paired_branch ");
-    cout << vec2str(paired_branch_) << endl;
+    cout << container2str(paired_branch_) << endl;
 
     printf("branch_function ");
-    cout << vec2str(branch_function_) << endl;
+    cout << container2str(branch_function_) << endl;
 
 
     /*end tvn debug*/
@@ -83,18 +84,18 @@ namespace crest{
 
   void Search::print_protected_members(){
     cout << "** Search::print_protected_members **" << endl;
-    cout << "branches " << vec2str(branches_) <<endl;
+    cout << "branches " << container2str(branches_) <<endl;
     
     cout << "n_covered_branches " << n_covered_branches_ << endl;
-    cout << "covered_branches" << vec2str(covered_branches_) << endl;
+    cout << "covered_branches" << container2str(covered_branches_) << endl;
     
     cout << "total_n_covered_branches " << total_n_covered_branches_ << endl;
     cout << "total_covered_branches " 
-	 << vec2str(total_covered_branches_) << endl;
+	 << container2str(total_covered_branches_) << endl;
     
     cout << "reachable_functions " << n_reachable_functions_ << endl;
     cout << "n_reachable_branches " << n_reachable_branches_ << endl;
-    cout << "reached " << vec2str(reached_functions_) << endl;
+    cout << "reached " << container2str(reached_functions_) << endl;
   }
 
 
@@ -109,7 +110,7 @@ namespace crest{
 
     cout << "Search:** UpdateCoverage **" << endl;
     print_protected_members();
-    cout << "exec.path().branches() " << vec2str(ex_branches) << endl;
+    cout << "exec.path().branches() " << container2str(ex_branches) << endl;
 
     for (auto i:ex_branches){
       if(i>0 && !covered_branches_[i]){
@@ -201,7 +202,7 @@ namespace crest{
     cout << "** SolveAtBranch **" << endl;
     cout << ex.str() << endl;
     cout << "branch_idx " << branch_idx <<endl;
-    cout << "input " << vec2str(*input) << endl;
+    cout << "input " << container2str(*input) << endl;
 
     const vector<SymPred *>& constraints = ex.path().constraints();
     
@@ -222,7 +223,7 @@ namespace crest{
 
     map<var_t,value_t>sol;
     
-    //bool success = YicesSolver::IncrementalSolve(ex.inputs(), ex.vars(),cs, &sol);
+    bool success = YicesSolver::IncrementalSolve(ex.inputs(), ex.vars(),cs, &sol);
 						 
     return false;
   }

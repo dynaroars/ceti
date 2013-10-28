@@ -1,4 +1,6 @@
-#include "basic_types.h"
+#ifndef CONCOLIC_SEARCH_H__  
+#define CONCOLIC_SEARCH_H__  
+                
 #include "sym.h"
 
 namespace crest{
@@ -63,3 +65,5 @@ namespace crest{
   };
 
 }//namespace crest
+
+#endif
