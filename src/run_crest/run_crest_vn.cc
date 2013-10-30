@@ -1,4 +1,4 @@
-#include "run_crest/concolic_search.h"
+#include "concolic_search.h"
 
 int main(int argc, char* argv[]){
   if (argc < 4) {

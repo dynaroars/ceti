@@ -1,4 +1,7 @@
 #include "concolic_search.h"
+#include "yices_solver.h"
+
+#include <algorithm>
 
 namespace crest{
 
@@ -6,14 +9,13 @@ namespace crest{
     : prog_(prog), max_iters_(max_iters), num_iters_(0){
     
     /*Read in branches*/
-    max_branch_ = 0;
-    max_function_ = 0;
     branches_.reserve(100000);
     branch_count_.reserve(100000);
     branch_count_.push_back(0);
 
     std::ifstream in("branches");
     assert(in);
+
     function_id_t fid; 
     int nBranches;
 
@@ -24,27 +26,27 @@ namespace crest{
 	assert(in >> b1 >> b2);
 	branches_.push_back(b1);
 	branches_.push_back(b2);
-	max_branch_ = std::max(max_branch_, std::max(b1,b2));
       }
     }
     in.close();
+    
+    int max_branch_id = *std::max_element(branches_.begin()+1, branches_.end());
+    max_branch_id++;
 
-    max_branch_++;
-    max_function_ = branch_count_.size();
-
-    /*paired_branch[i]=j == paired[j]=i ,  means i paired with j (ignore all 0 since no branch id 0)*/
-    paired_branch_.resize(max_branch_);
+    /*paired_branch[i]=j, paired_branch[j]=i ,  
+      means i paired with j (ignore all 0 since no branch id 0)*/
+    paired_branch_.resize(max_branch_id);
     for (size_t i = 0 ; i < branches_.size(); i += 2){
       paired_branch_.at(branches_.at(i)) = branches_.at(i+1);
       paired_branch_.at(branches_.at(i+1)) = branches_.at(i);
     }
 
     /*branch_function[i] == j  means branch j belongs to function i (ignore all j=0)*/
-    branch_function_.resize(max_branch_);
+    branch_function_.resize(max_branch_id);
     size_t i = 0;
     for (function_id_t j = 0; j < branch_count_.size(); ++j){
-      for (size_t k = 0 ; k < branch_count_[j]; k++){
-	branch_function_[branches_[i++]] = j;
+      for (size_t k = 0 ; k < branch_count_.at(j); k++){
+	branch_function_[branches_.at(i++)] = j;
       }
     }
 
@@ -52,29 +54,16 @@ namespace crest{
     total_n_covered_branches_ = n_covered_branches_ = 0;
     n_reachable_functions_ = n_reachable_branches_ = 0;
 
-    covered_branches_.resize(max_branch_, false);
-    total_covered_branches_.resize(max_branch_, false);
+    covered_branches_.resize(max_branch_id, false);
+    total_covered_branches_.resize(max_branch_id, false);
 
-    reached_functions_.resize(max_function_,false);
+    reached_functions_.resize(branch_count_.size(),false);
 
-    /*tvn debug*/
-    printf("branches_count %d ", max_function_);
-    cout << vec2str(branch_count_) << endl;
-
-    printf("max_branch %d, branches ", max_branch_);
-    cout << vec2str(branches_) << endl;
-
-    printf("paired_branch ");
-    cout << vec2str(paired_branch_) << endl;
-
-    printf("branch_function ");
-    cout << vec2str(branch_function_) << endl;
-
-
-    /*end tvn debug*/
+    print_protected_members();
 
     printf("Iteration 0: covered %u branches (%u reach funs, %u reach branches)\n",
 	   n_covered_branches_, n_reachable_functions_, n_reachable_branches_);
+
   }
   
   Search::~Search(){}
@@ -83,18 +72,21 @@ namespace crest{
 
   void Search::print_protected_members(){
     cout << "** Search::print_protected_members **" << endl;
-    cout << "branches " << vec2str(branches_) <<endl;
+    cout << "branches " << container2str(branches_) <<endl;
+    cout << "paired_branch_ " << container2str(paired_branch_) << endl;
+    cout << "branch_function_ " << container2str(branch_function_) << endl;
+    cout << "branch_count_ " << container2str(branch_count_) << endl;
     
     cout << "n_covered_branches " << n_covered_branches_ << endl;
-    cout << "covered_branches" << vec2str(covered_branches_) << endl;
+    cout << "covered_branches" << container2str(covered_branches_) << endl;
     
     cout << "total_n_covered_branches " << total_n_covered_branches_ << endl;
     cout << "total_covered_branches " 
-	 << vec2str(total_covered_branches_) << endl;
+	 << container2str(total_covered_branches_) << endl;
     
     cout << "reachable_functions " << n_reachable_functions_ << endl;
     cout << "n_reachable_branches " << n_reachable_branches_ << endl;
-    cout << "reached " << vec2str(reached_functions_) << endl;
+    cout << "reached " << container2str(reached_functions_) << endl;
   }
 
 
@@ -109,7 +101,7 @@ namespace crest{
 
     cout << "Search:** UpdateCoverage **" << endl;
     print_protected_members();
-    cout << "exec.path().branches() " << vec2str(ex_branches) << endl;
+    cout << "exec.path().branches() " << container2str(ex_branches) << endl;
 
     for (auto i:ex_branches){
       if(i>0 && !covered_branches_[i]){
@@ -149,49 +141,58 @@ namespace crest{
 
   void Search::WriteCoverageToFile(){
     string file = "coverage";
-    stringstream ss;
+    std::stringstream ss;
     for (auto b: branches_){
       if(total_covered_branches_.at(b))
-	ss << b << endl;
+  	ss << b << endl;
     }
     write_file(file,ss.str());
   }
   
   void Search::WriteInputToFile(const vector<value_t>&input){
     string file = "input";
-    stringstream ss;
+    std::stringstream ss;
     for (auto inp: input)
       ss << inp << endl;
     write_file(file,ss.str());
   }
   
-  void Search::LaunchProgram(const vector<value_t> &inputs){
-    WriteInputToFile(inputs);
-    system(prog_.c_str());
-  }
-
-  void Search::RunProgram(const vector<value_t> &inputs, SymExec *ex){
-    ++num_iters_;
-    printf("num_iters %d, max_iters %d\n",num_iters_,max_iters_);
+  bool Search::RunProgram(const vector<value_t> &inputs, SymExec *ex){
     if (++num_iters_ > max_iters_){
+      cout << "max_iters " << max_iters_ << "reached. Exit !" << endl;
       exit(0);
     }
-    
-    if (inputs.size() > 0){
-      printf("at iters_: %d, inputs: ", num_iters_);
-      for(size_t i = 0; i < inputs.size(); ++i){
-	printf("%lld , ", inputs[i]);
-      }
-      printf("\n");
-    }
-    LaunchProgram(inputs);
-    
-    //Read in execution
 
+    printf("** RunProgram ** (%d/%d)\n",num_iters_, max_iters_);
+    cout << "input " << container2str(inputs) << endl;;
+    cout << "output " << endl;
+
+    WriteInputToFile(inputs);
+    bool found_goal = false;
+
+    FILE *fin; char buff[512];
+    fin = popen(prog_.c_str(),"r");
+    while(fgets(buff,sizeof(buff),fin)){
+      string res(buff);
+      cout << res << endl;
+      if (res.find(goal) != string::npos){
+	cout << "Found " << goal << endl;
+	found_goal = true;
+	break;
+      }
+    }
+    pclose(fin);
+    
+    
+    if (found_goal)
+      return true;
+
+    //Read in execution
     std::ifstream in("szd_execution", std::ios::in | std::ios::binary);
     assert (in && ex->Parse(in));
     in.close();
-    
+    return false;
+
   }
 
   bool Search::
@@ -199,32 +200,67 @@ namespace crest{
 		vector<value_t> *input){
 
     cout << "** SolveAtBranch **" << endl;
-    cout << ex.str() << endl;
-    cout << "branch_idx " << branch_idx <<endl;
-    cout << "input " << vec2str(*input) << endl;
+    cout << ex << endl;
+    cout << "branch_idx " << branch_idx << endl;
+    cout << "input " << container2str(*input) << endl;
 
     const vector<SymPred *>& constraints = ex.path().constraints();
     
     //Optimization
     for(int i = static_cast<int>(branch_idx) - 1; i >= 0; --i){
-      if (*constraints[branch_idx] == *constraints[i]){
+      if (*constraints.at(branch_idx) == *constraints.at(i)){
 	cout << "optimized, idx " << branch_idx << " = " << i << endl;
+	return false;
+      }
+
+    }
+
+    map<var_t,value_t>sol;
+    vector<const SymPred*> cs(constraints.begin(),
+			      constraints.begin()+branch_idx+1);
+
+    cout << "constraint " << *constraints[branch_idx] << endl;
+    constraints[branch_idx]->Negate();
+    cout << "constraint after neg " << *constraints[branch_idx] << endl;
+
+    bool success = YicesSolver::IncrementalSolve(ex.inputs(), ex.vars(),cs, &sol);
+    cout << "success: " << success << endl;
+
+    constraints[branch_idx]->Negate();
+    
+    if (success){
+      cout << "Merge sol with prev input to get next input" << endl;
+      *input = ex.inputs();
+      cout << "cur input " << container2str(*input) << endl; 
+      cout << "sol " << container2str(sol) << endl;
+      for(auto i: sol){
+	(*input)[i.first] = i.second;
+      }
+      cout << "next input " << container2str(*input) << endl; 
+      return true;
+    }
+
+    return false;
+  }
+
+
+  bool Search::
+  CheckPrediction(const SymExec &old_exec, const SymExec &new_exec, 
+		  const size_t &branch_idx){
+    if ((old_exec.path().branches().size() <= branch_idx) || 
+	(new_exec.path().branches().size() <= branch_idx)){
+      return false;
+    }
+
+    for (size_t j = 0 ; j < branch_idx; ++j){
+      if(new_exec.path().branches().at(j) != old_exec.path().branches().at(j)) {
 	return false;
       }
     }
 
-    vector<const SymPred*> cs(constraints.begin(),
-			      constraints.begin()+branch_idx+1);
+    return (new_exec.path().branches().at(branch_idx) == 
+	    paired_branch_.at(old_exec.path().branches().at(branch_idx)));
 
-    cout << "constraint " << constraints[branch_idx]->str() << endl;
-    constraints[branch_idx]->Negate();
-    cout << "constraint after neg " << constraints[branch_idx]->str() << endl;
-
-    map<var_t,value_t>sol;
-    
-    //bool success = YicesSolver::IncrementalSolve(ex.inputs(), ex.vars(),cs, &sol);
-						 
-    return false;
   }
 
   /*** BoundedDepthFirstSearch ***/
@@ -235,25 +271,54 @@ namespace crest{
 
   BoundedDepthFirstSearch::~BoundedDepthFirstSearch(){}
 
-  void BoundedDepthFirstSearch::run(){
+  bool BoundedDepthFirstSearch::run(){
     SymExec ex;
-    RunProgram(vector<value_t>(), &ex);
-    UpdateCoverage(ex);
-    DFS(0, max_depth_, ex);
-  }
 
-  void BoundedDepthFirstSearch::
-  DFS(const size_t &pos, const int &depth, SymExec &prev_ex){
-    SymExec cur_ex;
-    vector<value_t> input;
-    const SymPath& path = prev_ex.path();
-    
-    for (size_t i = pos; (i < path.constraints().size()) && (depth > 0); ++i){
-      if(!SolveAtBranch(prev_ex,i,&input)){
-	continue;
-      }
+    if(RunProgram(vector<value_t>(), &ex)){
+      //UpdateCoverage(ex);
+      return true;
+    }
+    else{
+      return DFS(0, max_depth_, ex);
     }
 
+  }
+  bool BoundedDepthFirstSearch::
+  DFS(const size_t &pos, int depth, SymExec &prev_exec){
+
+    cout << "** DFS ** (pos " << pos << ", depth " << depth << ")"<< endl;
+
+    SymExec cur_exec;
+    vector<value_t> input;
+    const SymPath& path = prev_exec.path();
+    cout << "len of constraints " << path.constraints().size() << endl;
+
+    for (size_t i = pos; (i < path.constraints().size()) && (depth > 0); ++i){
+      cout << "DFS at cst " << i << endl;
+
+      if(!SolveAtBranch(prev_exec,i,&input)){
+	continue;
+      }
+
+      if (RunProgram(input, &cur_exec)){
+	//UpdateCoverage(cur_exec);
+	return true;
+      }
+
+      //check for prediction failure
+      size_t branch_idx = path.constraints_idx()[i];
+      if (!CheckPrediction(prev_exec, cur_exec, branch_idx)){
+	cout << "Prediction failed" << endl;
+	continue;
+      }
+      
+      depth--;
+      if (DFS(i+1, depth, cur_exec))
+	return true;
+      
+    }
+
+    return false;
   }
 
 }//namespace crest

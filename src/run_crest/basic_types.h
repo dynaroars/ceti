@@ -1,3 +1,6 @@
+#ifndef BASIC_TYPES_H__
+#define BASIC_TYPES_H__
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstddef>
@@ -8,17 +11,16 @@
 #include <sstream>
 #include <vector>
 #include <map>
+#include <queue>
 #include <set>
 #include <cassert>
+#include <type_traits>
 
-
-using std::stringstream;
 using std::string;
 using std::set;
 using std::map;
+using std::queue;
 using std::vector;
-using std::iostream;
-
 using std::cout;
 using std::endl;
 
@@ -30,32 +32,49 @@ namespace crest{
   typedef long long int value_t;
   typedef unsigned long int address_t;
 
-  enum compare_op_t {EQ = 0, NEQ = 1, GT = 2, LE = 3, LT = 4, GE = 5};
-  compare_op_t NegateCompareOp(compare_op_t);
+  namespace ops{
+    enum compare_op_t {EQ = 0, NEQ = 1, GT = 2, LE = 3, LT = 4, GE = 5};
+    //vector<string> op_str = {"==", "!=", ">" , "<=", "<" , ">="}
+  }
+  using ops::compare_op_t;
 
-  enum type_t { U_CHAR = 0,       CHAR = 1,
-		U_SHORT = 2,      SHORT = 3,
-		U_INT = 4,        INT = 5,
-		U_LONG = 6,       LONG = 7,
-		U_LONG_LONG = 8,  LONG_LONG = 9 };
+  compare_op_t NegateCompareOp(compare_op_t op);
 
+  namespace types{
+    enum type_t { U_CHAR = 0,       CHAR = 1,
+		  U_SHORT = 2,      SHORT = 3,
+		  U_INT = 4,        INT = 5,
+		  U_LONG = 6,       LONG = 7,
+		  U_LONG_LONG = 8,  LONG_LONG = 9 };
+  }
+  using types::type_t;
 
-  template<class T>
-    const string vec2str(const vector<T> &vec){
-    stringstream ss;
+  value_t CastTo(value_t val, type_t type);
+  
+  extern const char* kMinValueStr [];
+  extern const char* kMaxValueStr [];
+
+  extern const value_t kMinValue [];
+  extern const value_t kMaxValue [];
+  extern const size_t kByteSize[];
+
+    
+  template<typename T>
+    const string container2str(const T &ms){
+    std::stringstream ss;
     size_t i = 0;
-    ss << vec.size() << " [" ;
-    for(auto it: vec){
+    ss << ms.size() << " [" ;
+    for(auto it: ms){
       ss << it;
-      if (++i < vec.size()) ss << ", ";
+      if (++i < ms.size()) ss << ", ";
     }
     ss << "]";
     return ss.str();
   }
 
   template<class T1, class T2>
-    const string map2str(const map<T1,T2> &mmap){
-    stringstream ss;
+    const string container2str(const map<T1,T2> &mmap){
+    std::stringstream ss;
     size_t i = 0;
     
     ss << mmap.size() << " [" ;
@@ -66,11 +85,8 @@ namespace crest{
     ss << "]";
     return ss.str();
   }
-  
+
+
 }//namespace crest
 
-
-
-
-//common utils
-
+#endif  // BASE_BASIC_TYPES_H__ 

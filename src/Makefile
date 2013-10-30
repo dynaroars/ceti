@@ -6,7 +6,7 @@ CXXFLAGS = $(CFLAGS)
 LDFLAGS = -L$(YICES_DIR)/lib
 LOADLIBES = -lyices
 
-BASE_LIBS = run_crest/basic_types.o run_crest/sym.o #run_crest/yices_solver.o
+BASE_LIBS = run_crest/basic_types.o run_crest/sym.o run_crest/yices_solver.o
 
 # base/basic_types.o base/symbolic_execution.o \
 #             base/symbolic_interpreter.o base/symbolic_path.o \

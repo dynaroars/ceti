@@ -1,4 +1,6 @@
-#include "basic_types.h"
+#ifndef CONCOLIC_SEARCH_H__  
+#define CONCOLIC_SEARCH_H__  
+                
 #include "sym.h"
 
 namespace crest{
@@ -6,12 +8,9 @@ namespace crest{
   public:
     Search(const string &, const int &);
     virtual ~Search();
-    virtual void run() = 0;
+    virtual bool run() = 0;
 
   protected:
-
-    branch_id_t max_branch_;
-    function_id_t max_function_;
 
     vector<branch_id_t> branches_;
     vector<branch_id_t> paired_branch_;
@@ -30,9 +29,10 @@ namespace crest{
 
 
     void print_protected_members();
-    bool SolveAtBranch(const SymExec &,const size_t &, vector<value_t> *);
-		       
-    void RunProgram(const vector<value_t> &, SymExec *);
+    bool SolveAtBranch(const SymExec &, const size_t &, vector<value_t> *);
+    bool CheckPrediction(const SymExec &, const SymExec &, const size_t &);
+
+    bool RunProgram(const vector<value_t> &, SymExec *);
     bool UpdateCoverage(const SymExec &);
     bool UpdateCoverage(const SymExec &, set<branch_id_t> *);
 
@@ -40,13 +40,10 @@ namespace crest{
     const string prog_;
     const int max_iters_;
     int num_iters_;
-    
+    const string goal = "GOAL!\n";
 
     void WriteCoverageToFile();
     void WriteInputToFile(const vector<value_t>&);
-
-    void LaunchProgram(const vector<value_t> &inputs);
-
   };
 
   class BoundedDepthFirstSearch : public Search{
@@ -54,12 +51,14 @@ namespace crest{
   public:
     explicit BoundedDepthFirstSearch(const string &, const int &, const int &);
     virtual ~BoundedDepthFirstSearch();
-    virtual void run();
+    virtual bool run();
 
   private:
     int max_depth_;
-    void DFS(const size_t &, const int &, SymExec &);
+    bool DFS(const size_t &, int, SymExec &);
 
   };
 
 }//namespace crest
+
+#endif
