@@ -1,17 +1,14 @@
 YICES_DIR=/home/tnguyen/Src/Devel/YICES/yices1
+Z3_DIR=/home/tnguyen/Src/Devel/Z3/z3_stable
 
-CC=$(CXX)
-CFLAGS = -I. -I$(YICES_DIR)/include -Wall -O2 -std=c++11
+CC=gcc
+CXX=g++
+CFLAGS = -I. -I$(YICES_DIR)/include -I$(Z3_DIR)/include -Wall -O2 -std=c++11
 CXXFLAGS = $(CFLAGS)
-LDFLAGS = -L$(YICES_DIR)/lib
-LOADLIBES = -lyices
+LDFLAGS = -L$(YICES_DIR)/lib -L$(Z3_DIR)/lib
+LOADLIBES = -lyices -lz3
 
 BASE_LIBS = run_crest/basic_types.o run_crest/sym.o run_crest/yices_solver.o
-
-# base/basic_types.o base/symbolic_execution.o \
-#             base/symbolic_interpreter.o base/symbolic_path.o \
-#             base/symbolic_predicate.o base/symbolic_expression.o \
-#             base/yices_solver.o
 
 
 all: run_crest/run_crest_vn

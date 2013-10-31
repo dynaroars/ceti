@@ -103,7 +103,7 @@ namespace crest{
     print_protected_members();
     cout << "exec.path().branches() " << container2str(ex_branches) << endl;
 
-    for (auto i:ex_branches){
+    for (const auto &i: ex_branches){
       if(i>0 && !covered_branches_[i]){
 	covered_branches_[i]=true;
 	n_covered_branches_++;
@@ -142,7 +142,7 @@ namespace crest{
   void Search::WriteCoverageToFile(){
     string file = "coverage";
     std::stringstream ss;
-    for (auto b: branches_){
+    for (const auto &b: branches_){
       if(total_covered_branches_.at(b))
   	ss << b << endl;
     }
@@ -152,7 +152,7 @@ namespace crest{
   void Search::WriteInputToFile(const vector<value_t>&input){
     string file = "input";
     std::stringstream ss;
-    for (auto inp: input)
+    for (const auto &inp: input)
       ss << inp << endl;
     write_file(file,ss.str());
   }
@@ -233,7 +233,7 @@ namespace crest{
       *input = ex.inputs();
       cout << "cur input " << container2str(*input) << endl; 
       cout << "sol " << container2str(sol) << endl;
-      for(auto i: sol){
+      for(const auto &i: sol){
 	(*input)[i.first] = i.second;
       }
       cout << "next input " << container2str(*input) << endl; 

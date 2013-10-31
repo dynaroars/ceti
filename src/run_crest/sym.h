@@ -12,11 +12,11 @@ namespace crest{
     bool Parse(std::istream &s);
 
     void AppendVars(set<var_t> *vars) const{
-      for (auto c: coeff_) vars->insert(c.first);
+      for (const auto &c: coeff_) vars->insert(c.first);
     }
 
     bool DependsOn(const map<var_t, type_t> &vars) const{
-      for(auto c:coeff_){
+      for(const auto &c: coeff_){
 	if (vars.find(c.first) != vars.end()){
 	  return true;
 	}
@@ -30,19 +30,14 @@ namespace crest{
     const map<var_t,value_t>& terms() const {return this->coeff_;}
 
     friend std::ostream& operator<< (std::ostream &os, const SymExpr &e){
-      os << "(expr) " 
-	 << "const " << e.const_term()
-	 << ", "
-	 << "coef " << container2str(e.terms()) 
-	 << " (" << e.str() << ")" ;
-      
+      os << e.const_term() << " + " << e.str() ;
       return os;
     }
 
     const string str() const{
       std::stringstream ss;
       size_t i = 0;
-      for (auto c:coeff_) {
+      for (const auto &c: coeff_) {
 	ss << c.second << "*" << "x" << c.first;
 	if (++i < coeff_.size()) ss << " + ";
       }
@@ -78,9 +73,8 @@ namespace crest{
     compare_op_t op() const {return this->op_;}
     const SymExpr &expr() const {return *this->expr_;}
     friend std::ostream& operator<< (std::ostream &os, const SymPred &p){
-      string mop = "";
-      //os << "(pred)" << 
-      os << "(pred) " << "op " << p.op() << ", " << p.expr();
+
+      os << p.expr() << " " << op_str[p.op()] << " 0";
       return os;
     }
 

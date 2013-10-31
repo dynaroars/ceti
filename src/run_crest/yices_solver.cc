@@ -2,6 +2,7 @@
 
 #include "yices_solver.h"
 #include "yices_c.h"
+#include "z3.h"
 
 using std::make_pair;
 
@@ -13,7 +14,7 @@ namespace crest{
   		   const vector<const SymPred *> &constraints,
   		   map<var_t,value_t> *sol){
     
-    cout << "** IncrementalSolve **" << endl;
+    cout << "** "<< __func__ << " **" << endl;
     cout << "old_sol " << container2str(old_sol) << endl;
     cout << "vars " << container2str(vars) << endl;
     cout << "orig constraints " << endl;
@@ -72,8 +73,16 @@ namespace crest{
     cout << container2str(dependent_constraints) << endl;
 
     //Run SMT solver
+    map<var_t,value_t>solz3 ;
+
     sol->clear();
-    if (Solve(dependent_vars, dependent_constraints,sol)){
+
+    bool resultyices = Solve(dependent_vars, dependent_constraints, sol);
+
+    solz3.clear();    
+    bool resultz3 = SolveZ3(dependent_vars, dependent_constraints, &solz3);
+
+    if (resultyices){
       cout << "solved" << endl;
       //merge in constrained vars
       for(auto c: constraints){
@@ -93,21 +102,98 @@ namespace crest{
     return false;
 
   }
+  
+
+  Z3_ast mk_var(Z3_context ctx, const char * name, Z3_sort ty)
+  {   
+    Z3_symbol   s  = Z3_mk_string_symbol(ctx, name);
+    return Z3_mk_const(ctx, s, ty);
+  }
+
+  bool YicesSolver::SolveZ3(const map<var_t, type_t> &vars,
+			    const vector<const SymPred *> &constraints,
+			    map<var_t,value_t> *sol){
+    cout << "** " << __func__ <<" **" << endl;
+    cout << "vars " << container2str(vars) << endl;
+    cout << "constraints " << container2str(constraints) << endl;
+
+    Z3_config cfg = Z3_mk_config();
+    Z3_set_param_value(cfg, "MODEL", "true");
+    Z3_context ctx = Z3_mk_context(cfg);
+    Z3_del_config(cfg);
+    Z3_sort int_ty = Z3_mk_int_sort(ctx);
+
+    // //variables
+    // string v_name;
+    string v_name;
+    map<var_t, Z3_ast> z3_vars;
+    for (const auto &v: vars){
+      v_name = "x" + std::to_string(v.first);
+      Z3_ast v_ = Z3_mk_const(ctx, Z3_mk_string_symbol(ctx, v_name.c_str()), int_ty);
+      z3_vars[v.first]= v_ ; 
+      cout << "create new var " << v_name << " : " << v_ << endl;
+    }
+
+    // for (const auto &e : z3_vars){
+    //   cout << "z3_vars[" << e.first << "]=" << *e.second << endl;
+    // }
+    
+    //constraints
+    Z3_ast zero = Z3_mk_numeral(ctx, "0", int_ty);
+    vector<Z3_ast> terms;
+    for (const auto &c: constraints){
+      cout << "constraint " << *c << endl;
+      terms.clear();
+      terms.push_back(Z3_mk_numeral(ctx,std::to_string(c->expr().const_term()).c_str(),int_ty));
+      for (auto t: c->expr().terms()){
+    	cout << "1st " << t.first << ", 2nd " << t.second << endl;
+    	Z3_ast n = Z3_mk_numeral(ctx, std::to_string(t.second).c_str(), int_ty);
+    	Z3_ast prod[]  = {z3_vars[t.first], n};
+    	terms.push_back(Z3_mk_mul(ctx,2,prod));
+      }
+      
+      Z3_ast su = Z3_mk_add(ctx, terms.size(), &terms.front());
+      Z3_ast pred ;
+
+      switch(c->op()){
+      case c_ops::EQ : pred = Z3_mk_eq(ctx, su, zero); break;
+      case c_ops::NEQ: pred = Z3_mk_not(ctx, Z3_mk_eq(ctx, su, zero)); break;
+      case c_ops::GT:  pred = Z3_mk_gt(ctx, su, zero); break;
+      case c_ops::LE:  pred = Z3_mk_le(ctx, su, zero); break;
+      case c_ops::LT:  pred = Z3_mk_lt(ctx, su, zero); break;
+      case c_ops::GE:  pred = Z3_mk_ge(ctx, su, zero); break; 
+      default:
+    	cout << "unknown comparison op: \n" << c->op() << endl;
+    	exit(1);
+      }
+      
+      cout << "pred : " << Z3_ast_to_string(ctx,pred) << endl;
+      
+    }
+
+
+    return true;
+  }
+
+
 
   bool YicesSolver::Solve(const map<var_t, type_t> &vars,
-			  const vector<const SymPred *> &constraints,
-			  map<var_t,value_t> *sol){
+  			  const vector<const SymPred *> &constraints,
+  			  map<var_t,value_t> *sol){
 
-    cout << "** Solve **" << endl;
+    cout << "** " << __func__ <<" **" << endl;
+    cout << "vars " << container2str(vars) << endl;
+    cout << "constraints " << container2str(constraints) << endl;
+
     yices_enable_log_file("yices_log");
     yices_context ctx = yices_mk_context();
     assert(ctx);
 
     //type limits
-    vector<yices_expr> min_expr(types::LONG_LONG+1);
-    vector<yices_expr> max_expr(types::LONG_LONG+1);
+    vector<yices_expr> min_expr(c_types::LONG_LONG+1);
+    vector<yices_expr> max_expr(c_types::LONG_LONG+1);
     
-    for (int i = types::U_CHAR; i<=types::LONG_LONG; ++i){
+    for (int i = c_types::U_CHAR; i<=c_types::LONG_LONG; ++i){
       min_expr[i] = yices_mk_num_from_string(ctx, const_cast<char *>(kMinValueStr[i]));
       assert(min_expr[i]);
       max_expr[i] = yices_mk_num_from_string(ctx, const_cast<char *>(kMaxValueStr[i]));
@@ -147,8 +233,8 @@ namespace crest{
       terms.clear();
       terms.push_back(yices_mk_num(ctx, se.const_term()));
       for(auto j: se.terms()){
-	yices_expr prod [2] = {x_expr[j.first], yices_mk_num(ctx, j.second)};
-	terms.push_back(yices_mk_mul(ctx,prod,2));
+  	yices_expr prod [2] = {x_expr[j.first], yices_mk_num(ctx, j.second)};
+  	terms.push_back(yices_mk_mul(ctx,prod,2));
       }
       yices_expr e = yices_mk_sum(ctx, &terms.front(), terms.size());
 
@@ -156,18 +242,21 @@ namespace crest{
       cout << "op " << i->op() << endl;
 
       switch(i->op()){
-      case ops::EQ: pred = yices_mk_eq(ctx, e, zero); break;
-      case ops::NEQ: pred = yices_mk_diseq(ctx, e, zero); break;
-      case ops::GT:  pred = yices_mk_gt(ctx, e, zero); break;
-      case ops::LE:  pred = yices_mk_le(ctx, e, zero); break;
-      case ops::LT:  pred = yices_mk_lt(ctx, e, zero); break;
-      case ops::GE:  pred = yices_mk_ge(ctx, e, zero); break; 
+      case c_ops::EQ: pred = yices_mk_eq(ctx, e, zero); break;
+      case c_ops::NEQ: pred = yices_mk_diseq(ctx, e, zero); break;
+      case c_ops::GT:  pred = yices_mk_gt(ctx, e, zero); break;
+      case c_ops::LE:  pred = yices_mk_le(ctx, e, zero); break;
+      case c_ops::LT:  pred = yices_mk_lt(ctx, e, zero); break;
+      case c_ops::GE:  pred = yices_mk_ge(ctx, e, zero); break; 
       default:
-	cout << "unknown comparison op: \n" << i->op() << endl;
-	exit(1);
+  	cout << "unknown comparison op: \n" << i->op() << endl;
+  	exit(1);
       }
       yices_assert(ctx, pred);
     }
+    cout << "**** Context ****" << endl;
+    yices_dump_context(ctx);
+    cout << "*********" << endl;
 
     bool success = (yices_check(ctx) == l_true);
     if (success){
@@ -175,9 +264,9 @@ namespace crest{
       sol->clear();
       yices_model model = yices_get_model(ctx);
       for(auto i:vars){
-	long val;
-	assert(yices_get_int_value(model, x_decl[i.first], &val));
-	sol->insert(make_pair(i.first, val));
+  	long val;
+  	assert(yices_get_int_value(model, x_decl[i.first], &val));
+  	sol->insert(make_pair(i.first, val));
       }
     }
     cout << "sol " << container2str(*sol) << endl;

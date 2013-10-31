@@ -26,7 +26,7 @@ namespace crest{
   }
 
   /*** SymPred ***/
-  SymPred::SymPred(): op_(ops::EQ), expr_(new SymExpr(0)){}
+  SymPred::SymPred(): op_(c_ops::EQ), expr_(new SymExpr(0)){}
   SymPred::~SymPred(){delete expr_;}
 
   bool SymPred::Parse(std::istream &s){

@@ -7,6 +7,8 @@ namespace crest{
     return static_cast<compare_op_t>(op ^ 1);
   }
 
+  const char* op_str[] = {"==", "!=", ">" , "<=", "<", ">="};
+
   const char* kMinValueStr[] = {
     "0",
     "-128",
@@ -36,17 +38,17 @@ namespace crest{
 
   value_t CastTo(value_t val, type_t type) {
     switch (type) {
-    case types::U_CHAR:   return static_cast<unsigned char>(val);
-    case types::CHAR:     return static_cast<char>(val);
-    case types::U_SHORT:  return static_cast<unsigned short>(val);
-    case types::SHORT:    return static_cast<short>(val);
-    case types::U_INT:    return static_cast<unsigned int>(val);
-    case types::INT:      return static_cast<int>(val);
-    case types::U_LONG:   return static_cast<unsigned long>(val);
-    case types::LONG:     return static_cast<long>(val);
+    case c_types::U_CHAR:   return static_cast<unsigned char>(val);
+    case c_types::CHAR:     return static_cast<char>(val);
+    case c_types::U_SHORT:  return static_cast<unsigned short>(val);
+    case c_types::SHORT:    return static_cast<short>(val);
+    case c_types::U_INT:    return static_cast<unsigned int>(val);
+    case c_types::INT:      return static_cast<int>(val);
+    case c_types::U_LONG:   return static_cast<unsigned long>(val);
+    case c_types::LONG:     return static_cast<long>(val);
 
-    case types::U_LONG_LONG:
-    case types::LONG_LONG:
+    case c_types::U_LONG_LONG:
+    case c_types::LONG_LONG:
       // Cast would do nothing in these cases.
       return val;
     }

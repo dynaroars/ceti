@@ -13,9 +13,17 @@ namespace crest{
 		       const vector<const SymPred *>&,
 		       map<var_t,value_t> *);
 
-    static bool Solve(const map<var_t, type_t> &s,
-			  const vector<const SymPred *> &,
-			  map<var_t,value_t> *);
+    static bool 
+      Solve(const map<var_t, type_t> &s,
+	    const vector<const SymPred *> &,
+	    map<var_t,value_t> *);
+    
+    static bool 
+      SolveZ3(const map<var_t, type_t> &s,
+	      const vector<const SymPred *> &,
+	      map<var_t,value_t> *);
+    
+
   };
 }
 
