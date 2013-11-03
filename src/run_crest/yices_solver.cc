@@ -1,4 +1,5 @@
-#include <utility>
+#include <set>
+#include <queue>
 
 #include "yices_solver.h"
 #include "yices_c.h"
@@ -10,11 +11,11 @@ namespace crest{
   
   bool YicesSolver::
   IncrementalSolve(const vector<value_t> &old_sol,
-  		   const map<var_t,type_t> &vars,
+  		   const std::map<var_t,type_t> &vars,
   		   const vector<const SymPred *> &constraints,
-  		   map<var_t,value_t> *sol){
+  		   std::map<var_t,value_t> *sol){
     
-    cout << "** "<< __func__ << " **" << endl;
+    cout << __func__ << endl;
     cout << "old_sol " << container2str(old_sol) << endl;
     cout << "vars " << container2str(vars) << endl;
     cout << "orig constraints " << endl;
@@ -22,30 +23,32 @@ namespace crest{
     
     //build graph on variables, indicating a dependency when two variables co-occur 
     //in a symbolic predicate
-    set<var_t> tmp;
-    vector< set<var_t> > depends(vars.size());
+    std::set<var_t> tvars;
+    vector<std::set<var_t> > depends(vars.size());
     for(auto c: constraints){
-      tmp.clear();
-      c->AppendVars(&tmp);
-      for(auto j:tmp){
-       	depends[j].insert(tmp.begin(),tmp.end());
+      tvars.clear();
+      c->AppendVars(&tvars);
+      for(auto j:tvars){
+       	depends[j].insert(tvars.begin(),tvars.end());
       }
     }
+    for (size_t i = 0 ; i < depends.size(); ++i)
+      cout << "depends[" << i << "] = " << container2str(depends.at(i)) << endl;
     
     //Initialize set of dependent vars to those in the constraints
     //assumption: last element of constraints is the only new cst
     //aslo init queue for BFS
-    cout << "tmp " << container2str(tmp) << endl;
-    map<var_t, type_t> dependent_vars;
-    queue<var_t> Q;
-    tmp.clear();
-    constraints.back()->AppendVars(&tmp);
-    for (auto j:tmp){
+
+    std::map<var_t, type_t> dependent_vars;
+    std::queue<var_t> Q;
+    tvars.clear();
+    constraints.back()->AppendVars(&tvars);
+    for (auto j:tvars){
       dependent_vars.insert(*vars.find(j));
       Q.push(j);
     }
     cout << "dependent vars " << container2str(dependent_vars) << endl;
-    //cout << container2str(Q) << endl;
+
 
     //Run BFS
     while (!Q.empty()){
@@ -73,29 +76,27 @@ namespace crest{
     cout << container2str(dependent_constraints) << endl;
 
     //Run SMT solver
-    map<var_t,value_t>solz3 ;
 
     sol->clear();
+    bool result = SolveZ3(dependent_vars, dependent_constraints, sol);
 
-    bool resultyices = Solve(dependent_vars, dependent_constraints, sol);
+    // solz3.clear();    
+    // bool resultz3 = SolveZ3(dependent_vars, dependent_constraints, &solz3);
 
-    solz3.clear();    
-    bool resultz3 = SolveZ3(dependent_vars, dependent_constraints, &solz3);
 
-    if (resultyices){
+    if (result){
       cout << "solved" << endl;
       //merge in constrained vars
       for(auto c: constraints){
-	c->AppendVars(&tmp);
+	c->AppendVars(&tvars);
       }
-
-      for(auto v: tmp){
+      cout << "tvars " << container2str(tvars) << endl;
+      for(auto v: tvars){
+	//if v not found in new sol, use v of old sol
 	if (sol->find(v) == sol->end()){
-	  cout << "gh " << v << endl;
 	  sol->insert(make_pair(v, old_sol[v]));
 	}
       }
-
       return true;
     }
 
@@ -104,16 +105,10 @@ namespace crest{
   }
   
 
-  Z3_ast mk_var(Z3_context ctx, const char * name, Z3_sort ty)
-  {   
-    Z3_symbol   s  = Z3_mk_string_symbol(ctx, name);
-    return Z3_mk_const(ctx, s, ty);
-  }
-
-  bool YicesSolver::SolveZ3(const map<var_t, type_t> &vars,
+  bool YicesSolver::SolveZ3(const std::map<var_t, type_t> &vars,
 			    const vector<const SymPred *> &constraints,
-			    map<var_t,value_t> *sol){
-    cout << "** " << __func__ <<" **" << endl;
+			    std::map<var_t,value_t> *sol){
+    cout << __func__ << " Z3 " << z3_version() << endl;
     cout << "vars " << container2str(vars) << endl;
     cout << "constraints " << container2str(constraints) << endl;
 
@@ -123,65 +118,94 @@ namespace crest{
     Z3_del_config(cfg);
     Z3_sort int_ty = Z3_mk_int_sort(ctx);
 
-    // //variables
-    // string v_name;
+    //make variables
     string v_name;
-    map<var_t, Z3_ast> z3_vars;
+    std::map<var_t, Z3_ast> z3_vars;
     for (const auto &v: vars){
-      v_name = "x" + std::to_string(v.first);
-      Z3_ast v_ = Z3_mk_const(ctx, Z3_mk_string_symbol(ctx, v_name.c_str()), int_ty);
+      v_name = "x" + std::to_string(v.first) ;
+      Z3_ast v_ = 
+	Z3_mk_const(ctx, Z3_mk_string_symbol(ctx, v_name.c_str()), int_ty);
       z3_vars[v.first]= v_ ; 
-      cout << "create new var " << v_name << " : " << v_ << endl;
     }
 
-    // for (const auto &e : z3_vars){
-    //   cout << "z3_vars[" << e.first << "]=" << *e.second << endl;
-    // }
-    
-    //constraints
-    Z3_ast zero = Z3_mk_numeral(ctx, "0", int_ty);
+    for (const auto &e : z3_vars){
+      cout << "z3_vars[" << e.first << "] = " 
+	   << Z3_ast_to_string(ctx, e.second) << endl;
+    }
+
+    //make constraints
+    Z3_ast zero = Z3_mk_int(ctx, 0, int_ty);
     vector<Z3_ast> terms;
     for (const auto &c: constraints){
-      cout << "constraint " << *c << endl;
-      terms.clear();
-      terms.push_back(Z3_mk_numeral(ctx,std::to_string(c->expr().const_term()).c_str(),int_ty));
-      for (auto t: c->expr().terms()){
-    	cout << "1st " << t.first << ", 2nd " << t.second << endl;
-    	Z3_ast n = Z3_mk_numeral(ctx, std::to_string(t.second).c_str(), int_ty);
-    	Z3_ast prod[]  = {z3_vars[t.first], n};
-    	terms.push_back(Z3_mk_mul(ctx,2,prod));
-      }
-      
-      Z3_ast su = Z3_mk_add(ctx, terms.size(), &terms.front());
-      Z3_ast pred ;
 
+      terms.clear();
+      terms.push_back(Z3_mk_int(ctx, c->expr().const_term(), int_ty));
+      for (auto t: c->expr().terms()){
+    	Z3_ast prod[2]  = {z3_vars[t.first], 
+			  Z3_mk_int(ctx, t.second, int_ty)};
+    	terms.push_back(Z3_mk_mul(ctx, 2, prod));
+      }
+      Z3_ast e = Z3_mk_add(ctx, terms.size(), &terms.front());
+
+      Z3_ast pred ;
       switch(c->op()){
-      case c_ops::EQ : pred = Z3_mk_eq(ctx, su, zero); break;
-      case c_ops::NEQ: pred = Z3_mk_not(ctx, Z3_mk_eq(ctx, su, zero)); break;
-      case c_ops::GT:  pred = Z3_mk_gt(ctx, su, zero); break;
-      case c_ops::LE:  pred = Z3_mk_le(ctx, su, zero); break;
-      case c_ops::LT:  pred = Z3_mk_lt(ctx, su, zero); break;
-      case c_ops::GE:  pred = Z3_mk_ge(ctx, su, zero); break; 
+      case c_ops::EQ : pred = Z3_mk_eq(ctx, e, zero); break;
+      case c_ops::NEQ: pred = Z3_mk_not(ctx, Z3_mk_eq(ctx, e, zero)); break;
+      case c_ops::GT:  pred = Z3_mk_gt(ctx, e, zero); break;
+      case c_ops::LE:  pred = Z3_mk_le(ctx, e, zero); break;
+      case c_ops::LT:  pred = Z3_mk_lt(ctx, e, zero); break;
+      case c_ops::GE:  pred = Z3_mk_ge(ctx, e, zero); break; 
       default:
     	cout << "unknown comparison op: \n" << c->op() << endl;
     	exit(1);
       }
-      
-      cout << "pred : " << Z3_ast_to_string(ctx,pred) << endl;
-      
+
+      cout << "constraint " << *c << ", "
+	   << Z3_ast_to_string(ctx,pred) << endl;
+      Z3_assert_cnstr(ctx, pred);
     }
 
 
-    return true;
+    Z3_model model = 0;
+    bool success = (Z3_check_and_get_model(ctx, &model) == Z3_L_TRUE);
+    if (success == Z3_L_TRUE){
+      
+      cout << "model\n" << Z3_model_to_string(ctx, model) << endl;
+
+      int n_consts = Z3_get_model_num_constants(ctx, model);
+      assert(n_consts == (int)vars.size());
+
+      int idx; long val;
+      sol->clear();      
+      for (int i = 0; i < n_consts; ++i){
+	
+	Z3_func_decl cnst  = Z3_get_model_constant(ctx, model, i);
+	Z3_symbol name = Z3_get_decl_name(ctx, cnst);
+	Z3_ast a = Z3_mk_app(ctx, cnst, 0, 0);
+	Z3_ast v = a;
+	Z3_eval(ctx, model, a, &v);
+
+	sscanf(Z3_get_symbol_string(ctx, name), "x%d", &idx);
+	val = std::strtol(Z3_get_numeral_string(ctx, v), NULL, 0);
+	
+	sol->insert(make_pair(idx, val));
+      }
+      cout << "sol " << container2str(*sol) << endl;
+    }
+
+    if(model) Z3_del_model(ctx, model);
+    Z3_del_context(ctx);
+
+    return success;
   }
 
 
 
-  bool YicesSolver::Solve(const map<var_t, type_t> &vars,
+  bool YicesSolver::Solve(const std::map<var_t, type_t> &vars,
   			  const vector<const SymPred *> &constraints,
-  			  map<var_t,value_t> *sol){
+  			  std::map<var_t,value_t> *sol){
 
-    cout << "** " << __func__ <<" **" << endl;
+    cout << __func__ << endl;
     cout << "vars " << container2str(vars) << endl;
     cout << "constraints " << container2str(constraints) << endl;
 
@@ -205,8 +229,8 @@ namespace crest{
     assert(int_ty);
 
     //var decl's
-    map<var_t, yices_var_decl> x_decl;
-    map<var_t, yices_expr> x_expr;
+    std::map<var_t, yices_var_decl> x_decl;
+    std::map<var_t, yices_expr> x_expr;
     for (auto v:vars){
       char buff[32];
       const var_t vf = v.first, vs = v.second;
@@ -260,7 +284,7 @@ namespace crest{
 
     bool success = (yices_check(ctx) == l_true);
     if (success){
-      cout << "check ok " << endl;
+      cout << "yices check ok\n";
       sol->clear();
       yices_model model = yices_get_model(ctx);
       for(auto i:vars){
@@ -273,6 +297,15 @@ namespace crest{
 
     yices_del_context(ctx);
     return success;
+  }
+
+
+  const string YicesSolver::z3_version(){
+    std::stringstream ss;
+    unsigned major, minor, build, revision;
+    Z3_get_version(&major, &minor, &build, &revision);
+    ss << major << "." << minor << "." << build << "." << revision;
+    return ss.str();
   }
   
 }

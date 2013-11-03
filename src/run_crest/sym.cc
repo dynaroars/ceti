@@ -3,6 +3,9 @@
 namespace crest{
   /*** SymExpr ***/
   SymExpr::SymExpr(value_t c): const_(c){}
+  SymExpr::SymExpr(value_t c, var_t v): const_(c){
+    coeff_[v] = c;
+  }
   SymExpr::~SymExpr(){}
 
   bool SymExpr::Parse(std::istream &s){
@@ -19,11 +22,12 @@ namespace crest{
       s.read((char *) &c, sizeof(c));
       coeff_[v] = c;
     }
-    cout << "Expr:Parse " << endl;
+    cout << __func__ << endl;
     cout << "const " << const_ << endl;
     cout << "coeff " << container2str(coeff_) << endl; 
     return !s.fail();
   }
+
 
   /*** SymPred ***/
   SymPred::SymPred(): op_(c_ops::EQ), expr_(new SymExpr(0)){}
@@ -31,7 +35,7 @@ namespace crest{
 
   bool SymPred::Parse(std::istream &s){
     op_ = static_cast<compare_op_t>(s.get());
-    cout << "Pred:Parse " << endl;
+    cout << __func__ << endl;
     cout << "op " << op_ << endl;
     return (expr_->Parse(s) && !s.fail());
   }
@@ -65,7 +69,7 @@ namespace crest{
 
     s.read((char*)&constraints_idx_.front(), len * sizeof(size_t));
 
-    cout << "Path:Parse " << endl;
+    cout << __func__ << endl;
     cout << "branches " << container2str(branches_) << endl;
     cout << "constraints_idx " << container2str(constraints_idx_) << endl; 
     cout << "constraints " << constraints_.size() << endl;
@@ -77,6 +81,16 @@ namespace crest{
   
     return !s.fail();
   }
+
+  /* For instrumentation */
+  SymPath::SymPath(bool pre_alloc){
+    if (pre_alloc){
+      branches_.reserve(4000000);
+      constraints_idx_.reserve(50000);
+      constraints_.reserve(50000);
+    }
+  }
+   
 
   /*** SymExec ***/
   SymExec::SymExec() {}
@@ -93,13 +107,17 @@ namespace crest{
       s.read((char *)&inputs_[i],sizeof(value_t));
     }
 
-    cout << "Exec:Parse " << endl;
-    cout << "len " << len << endl;
+    cout << __func__ << endl;
     cout << "inputs " << container2str(inputs_) << endl;
     cout << "vars "  << container2str(vars_) << endl; 
-    
     return (path_.Parse(s) && !s.fail());
   }
+
+  /* For instrumentation */
+  SymExec::SymExec(bool pre_alloc)
+    :path_(pre_alloc){}
+
+
 
   //common utils
   void write_file(const string &file, const string &content){

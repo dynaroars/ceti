@@ -11,15 +11,10 @@
 #include <sstream>
 #include <vector>
 #include <map>
-#include <queue>
-#include <set>
 #include <cassert>
-#include <type_traits>
+
 
 using std::string;
-using std::set;
-using std::map;
-using std::queue;
 using std::vector;
 using std::cout;
 using std::endl;
@@ -30,7 +25,7 @@ namespace crest{
   typedef unsigned int function_id_t;
   typedef unsigned int var_t;
   typedef long long int value_t;
-  typedef unsigned long int address_t;
+  typedef unsigned long int addr_t;
 
   namespace c_ops{
     enum compare_op_t {EQ = 0, NEQ = 1, GT = 2, LE = 3, LT = 4, GE = 5};
@@ -87,7 +82,7 @@ namespace crest{
 
 
   template<typename T1, typename T2>
-    const string container2str(const map<T1,T2> &mmap){
+    const string container2str(const std::map<T1,T2> &mmap){
     std::stringstream ss;
     size_t i = 0;
     

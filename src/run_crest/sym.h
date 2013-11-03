@@ -1,6 +1,9 @@
 #ifndef SYM_H__
 #define SYM_H__
 
+#include <sstream>
+#include <map>
+#include <set>
 #include "basic_types.h"
 
 namespace crest{
@@ -8,14 +11,15 @@ namespace crest{
   class SymExpr{
   public:
     explicit SymExpr(value_t);
+    explicit SymExpr(value_t, var_t);
     ~SymExpr();
     bool Parse(std::istream &s);
 
-    void AppendVars(set<var_t> *vars) const{
+    void AppendVars(std::set<var_t> *vars) const{
       for (const auto &c: coeff_) vars->insert(c.first);
     }
 
-    bool DependsOn(const map<var_t, type_t> &vars) const{
+    bool DependsOn(const std::map<var_t, type_t> &vars) const{
       for(const auto &c: coeff_){
 	if (vars.find(c.first) != vars.end()){
 	  return true;
@@ -27,7 +31,7 @@ namespace crest{
     bool isConcrete() const {return this->coeff_.empty();}
 
     value_t const_term() const {return this->const_;}
-    const map<var_t,value_t>& terms() const {return this->coeff_;}
+    const std::map<var_t,value_t>& terms() const {return this->coeff_;}
 
     friend std::ostream& operator<< (std::ostream &os, const SymExpr &e){
       os << e.const_term() << " + " << e.str() ;
@@ -48,9 +52,11 @@ namespace crest{
       return const_ == o.const_ && coeff_ == o.coeff_;
     }
 
+
+
   private:
     value_t const_;
-    map<var_t, value_t> coeff_;
+    std::map<var_t, value_t> coeff_;
   };
 
   class SymPred{
@@ -63,10 +69,11 @@ namespace crest{
       op_ = NegateCompareOp(op_);
     }
 
-    void AppendVars(set<var_t> *vars) const{
+    void AppendVars(std::set<var_t> *vars) const{
       expr_->AppendVars(vars);
     }
-    bool DependsOn(const map<var_t, type_t> &vars) const{
+
+    bool DependsOn(const std::map<var_t, type_t> &vars) const{
       return this->expr_->DependsOn(vars);
     };
 
@@ -107,6 +114,8 @@ namespace crest{
       return os;
     }
     
+    /* For instrumentation */
+    explicit SymPath(bool pre_alloc);
   private:
     vector<branch_id_t> branches_;
     vector<SymPred *> constraints_;
@@ -119,9 +128,14 @@ namespace crest{
     ~SymExec();
     bool Parse(std::istream &s);
 
-    const map<var_t, type_t> &vars() const {return this->vars_;}
+    const std::map<var_t, type_t> &vars() const {return this->vars_;}
     const vector<value_t> &inputs() const {return this->inputs_;}
     const SymPath &path() const {return this->path_;} 
+
+
+    std::map<var_t, type_t> *mutable_vars(){return &this->vars_;}
+    vector<value_t> *mutable_inputs(){return &this->inputs_;}
+    SymPath *mutable_path(){return &this->path_;} 
 
     friend std::ostream& operator<< (std::ostream &os, const SymExec &e){
       os << "(exec) "
@@ -131,9 +145,10 @@ namespace crest{
       return os;
     }
 
-
+    /* For instrumentation */
+    explicit SymExec(bool pre_alloc);
   private:
-    map<var_t, type_t> vars_;
+    std::map<var_t, type_t> vars_;
     vector<value_t> inputs_;
     SymPath path_;
   }; 

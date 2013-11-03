@@ -1,6 +1,7 @@
 #ifndef YICES_SOLVER
 #define YICES_SOLVER
 
+#include <map>
 #include "basic_types.h"
 #include "sym.h"
 
@@ -9,20 +10,22 @@ namespace crest{
   public:
     static bool 
       IncrementalSolve(const vector<value_t> &,
-		       const map<var_t,type_t> &,
+		       const std::map<var_t,type_t> &,
 		       const vector<const SymPred *>&,
-		       map<var_t,value_t> *);
+		       std::map<var_t,value_t> *);
 
     static bool 
-      Solve(const map<var_t, type_t> &s,
+      Solve(const std::map<var_t, type_t> &s,
 	    const vector<const SymPred *> &,
-	    map<var_t,value_t> *);
+	    std::map<var_t,value_t> *);
     
     static bool 
-      SolveZ3(const map<var_t, type_t> &s,
+      SolveZ3(const std::map<var_t, type_t> &s,
 	      const vector<const SymPred *> &,
-	      map<var_t,value_t> *);
-    
+	      std::map<var_t,value_t> *);
+
+    static const string z3_version();
+      
 
   };
 }

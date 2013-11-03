@@ -1,7 +1,10 @@
+#include <map>
+#include <sstream>
+#include <algorithm>
 #include "concolic_search.h"
 #include "yices_solver.h"
 
-#include <algorithm>
+
 
 namespace crest{
 
@@ -95,7 +98,7 @@ namespace crest{
     return UpdateCoverage(ex, NULL);
   }
 
-  bool Search::UpdateCoverage(const SymExec &ex, set<branch_id_t> *new_branches){
+  bool Search::UpdateCoverage(const SymExec &ex, std::set<branch_id_t> *new_branches){
     const unsigned int prev_covered_ = n_covered_branches_;
     const vector<branch_id_t> &ex_branches = ex.path().branches();
 
@@ -162,44 +165,45 @@ namespace crest{
       cout << "max_iters " << max_iters_ << "reached. Exit !" << endl;
       exit(0);
     }
-
-    printf("** RunProgram ** (%d/%d)\n",num_iters_, max_iters_);
+    
+    cout << __func__ << " (" << num_iters_ << ", " 
+	 << max_iters_ << ")" << endl;
+    //printf("** RunProgram ** (%d/%d)\n",num_iters_, max_iters_);
     cout << "input " << container2str(inputs) << endl;;
-    cout << "output " << endl;
 
     WriteInputToFile(inputs);
-    bool found_goal = false;
 
+    bool found_goal = false;
     FILE *fin; char buff[512];
     fin = popen(prog_.c_str(),"r");
+
+    //char *print_exec = "print_execution";
+    //system(print_exec);
+
     while(fgets(buff,sizeof(buff),fin)){
       string res(buff);
-      cout << res << endl;
+      cout << ">> " << res << endl;
       if (res.find(goal) != string::npos){
-	cout << "Found " << goal << endl;
 	found_goal = true;
 	break;
       }
     }
     pclose(fin);
-    
-    
-    if (found_goal)
-      return true;
+
+    if (found_goal) return true;
 
     //Read in execution
     std::ifstream in("szd_execution", std::ios::in | std::ios::binary);
     assert (in && ex->Parse(in));
     in.close();
     return false;
-
   }
 
   bool Search::
   SolveAtBranch(const SymExec &ex, const size_t &branch_idx, 
 		vector<value_t> *input){
 
-    cout << "** SolveAtBranch **" << endl;
+    cout << __func__ << endl;
     cout << ex << endl;
     cout << "branch_idx " << branch_idx << endl;
     cout << "input " << container2str(*input) << endl;
@@ -209,34 +213,31 @@ namespace crest{
     //Optimization
     for(int i = static_cast<int>(branch_idx) - 1; i >= 0; --i){
       if (*constraints.at(branch_idx) == *constraints.at(i)){
-	cout << "optimized, idx " << branch_idx << " = " << i << endl;
+	cout << "*********** optimized, idx " << branch_idx << " = " << i << endl;
 	return false;
       }
-
     }
 
-    map<var_t,value_t>sol;
-    vector<const SymPred*> cs(constraints.begin(),
-			      constraints.begin()+branch_idx+1);
-
-    cout << "constraint " << *constraints[branch_idx] << endl;
+    vector<const SymPred*> 
+      cs(constraints.begin(),constraints.begin()+branch_idx+1);
+	 
+    cout << "constraint " << *constraints[branch_idx];
     constraints[branch_idx]->Negate();
-    cout << "constraint after neg " << *constraints[branch_idx] << endl;
+    cout << ", after neg " << *constraints[branch_idx] << endl;
 
+    std::map<var_t,value_t>sol;
     bool success = YicesSolver::IncrementalSolve(ex.inputs(), ex.vars(),cs, &sol);
-    cout << "success: " << success << endl;
-
     constraints[branch_idx]->Negate();
     
     if (success){
-      cout << "Merge sol with prev input to get next input" << endl;
+      cout << "Merge sol with prev input to get neew input" << endl;
       *input = ex.inputs();
       cout << "cur input " << container2str(*input) << endl; 
       cout << "sol " << container2str(sol) << endl;
       for(const auto &i: sol){
 	(*input)[i.first] = i.second;
       }
-      cout << "next input " << container2str(*input) << endl; 
+      cout << "new input " << container2str(*input) << endl; 
       return true;
     }
 
@@ -286,17 +287,17 @@ namespace crest{
   bool BoundedDepthFirstSearch::
   DFS(const size_t &pos, int depth, SymExec &prev_exec){
 
-    cout << "** DFS ** (pos " << pos << ", depth " << depth << ")"<< endl;
+    cout << __func__ << 
+      " (pos " << pos << ", depth " << depth << ")" << endl;
 
     SymExec cur_exec;
     vector<value_t> input;
     const SymPath& path = prev_exec.path();
-    cout << "len of constraints " << path.constraints().size() << endl;
 
     for (size_t i = pos; (i < path.constraints().size()) && (depth > 0); ++i){
-      cout << "DFS at cst " << i << endl;
+      cout << "DFS at cst " << i << "/" << path.constraints().size()-1 << endl;
 
-      if(!SolveAtBranch(prev_exec,i,&input)){
+      if(!SolveAtBranch(prev_exec, i, &input)){
 	continue;
       }
 

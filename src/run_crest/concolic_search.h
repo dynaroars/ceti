@@ -1,6 +1,7 @@
 #ifndef CONCOLIC_SEARCH_H__  
 #define CONCOLIC_SEARCH_H__  
-                
+
+#include <set>                
 #include "sym.h"
 
 namespace crest{
@@ -34,13 +35,13 @@ namespace crest{
 
     bool RunProgram(const vector<value_t> &, SymExec *);
     bool UpdateCoverage(const SymExec &);
-    bool UpdateCoverage(const SymExec &, set<branch_id_t> *);
+    bool UpdateCoverage(const SymExec &, std::set<branch_id_t> *);
 
   private:
     const string prog_;
     const int max_iters_;
     int num_iters_;
-    const string goal = "GOAL!\n";
+    const string goal = "GOAL";
 
     void WriteCoverageToFile();
     void WriteInputToFile(const vector<value_t>&);
