@@ -20,6 +20,7 @@ namespace crest{
     void ApplyBinaryOp(id_t, binary_op_t, value_t);
     void ApplyCompareOp(id_t, compare_op_t, value_t);
 
+    void HandleReturn(id_t, value_t );
     void Call(id_t, func_id_t);
     void Return(id_t);
     void Branch(id_t, branch_id_t, bool);
@@ -33,6 +34,14 @@ namespace crest{
       SymExpr *expr; //nullptr to indicate concrete
       value_t concrete;
     };
+
+    static string StackElem2str(const StackElem &se){
+      std::stringstream ss;
+      ss << "se: concr " << se.concrete;
+      if (se.expr) ss << ", sym " << *se.expr;
+      return ss.str();
+    }
+
     vector<StackElem> stack_;
 
     std::map<addr_t, SymExpr *> mem_;

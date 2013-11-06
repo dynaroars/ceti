@@ -18,24 +18,9 @@ namespace crest{
 
     void Serialize(std::string *) const;
     bool Parse(std::istream &s);
-
-    void Negate(){
-      const_ = -const_;
-      for(auto &c: coeff_) c.second = -c.second;
-    }
-
-    void AppendVars(std::set<var_t> *vars) const{
-      for (const auto &c: coeff_) vars->insert(c.first);
-    }
-
-    bool DependsOn(const std::map<var_t, type_t> &vars) const{
-      for(const auto &c: coeff_){
-	if (vars.find(c.first) != vars.end()){
-	  return true;
-	}
-      }
-      return false;
-    }
+    void Negate();
+    void AppendVars(std::set<var_t> *) const;
+    bool DependsOn(const std::map<var_t, type_t> &) const;
 
     bool IsConcrete() const {return coeff_.empty();}
 
@@ -47,36 +32,13 @@ namespace crest{
       return os;
     }
 
-    const string str() const{
-      std::stringstream ss;
-      auto i = coeff_.size();
-      for (const auto &c: coeff_) {
-	if (c.second == 0) continue;
-	if (c.second != 1) ss << c.second << "*";
-	ss << "x" << c.first ;
-	if (--i > 0) ss << " + ";;
-      }
-      if (const_ != 0){
-	if (coeff_.size() > 0) ss << " + ";
-	ss << const_;
-      }
-
-      return ss.str();
-    }
+    const string str() const;
 
     const SymExpr &operator += (const SymExpr &);
     const SymExpr &operator -= (const SymExpr &);
-
-    const SymExpr &operator += (const value_t &c){const_ += c; return *this;}
-    const SymExpr &operator -= (const value_t &c){const_ -= c; return *this;}
-    const SymExpr &operator *= (const value_t &c){
-      if (c == 0){coeff_.clear(); const_=0;}
-      else{
-	for(auto &co: coeff_) co.second *= c;
-	const_ *= c;
-      }
-      return *this;
-    }
+    const SymExpr &operator += (const value_t &);
+    const SymExpr &operator -= (const value_t &);
+    const SymExpr &operator *= (const value_t &);
 
     bool operator==(const SymExpr &o) const{
       return const_ == o.const_ && coeff_ == o.coeff_;

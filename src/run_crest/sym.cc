@@ -37,6 +37,42 @@ namespace crest{
     return !s.fail();
   }
 
+  void SymExpr::Negate(){
+      const_ = -const_;
+      for(auto &c: coeff_) c.second = -c.second;
+    }
+
+  void SymExpr::AppendVars(std::set<var_t> *vars) const{
+    for (const auto &c: coeff_) vars->insert(c.first);
+  }
+  
+  bool SymExpr::DependsOn(const std::map<var_t, type_t> &vars) const{
+    for(const auto &c: coeff_){
+      if (vars.find(c.first) != vars.end()){
+	return true;
+      }
+    }
+    return false;
+  }
+
+  const string SymExpr::str() const{
+      std::stringstream ss;
+      auto i = coeff_.size();
+      for (const auto &c: coeff_) {
+	if (c.second == 0) continue;
+	if (c.second != 1) ss << c.second << "*";
+	ss << "x" << c.first ;
+	if (--i > 0) ss << " + ";;
+      }
+      if (const_ != 0){
+	if (coeff_.size() > 0) ss << " + ";
+	ss << const_;
+      }
+
+      return ss.str();
+    }
+
+
   const SymExpr &SymExpr::operator += (const SymExpr &e){
     const_ += e.const_;
     for(const auto &i: e.coeff_){
@@ -63,6 +99,24 @@ namespace crest{
     }
     return *this;
   }
+
+  const SymExpr &SymExpr::operator += (const value_t &c){
+    const_ += c; 
+    return *this;
+  }
+  const SymExpr &SymExpr::operator -= (const value_t &c){
+    const_ -= c; 
+    return *this;
+  }
+  const SymExpr &SymExpr::operator *= (const value_t &c){
+    if (c == 0){coeff_.clear(); const_=0;}
+    else{
+      for(auto &co: coeff_) co.second *= c;
+      const_ *= c;
+    }
+    return *this;
+  }
+
   
   /*** SymPred ***/
   SymPred::SymPred(compare_op_t op, SymExpr *e): op_(op), expr_(e){}

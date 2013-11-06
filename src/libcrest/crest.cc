@@ -44,15 +44,18 @@ void __CrestInit(){
   srand((unsigned) time(NULL));
 
   //Read input
-  vector<value_t> input;
-  std::ifstream in ("input");
-  value_t v;
-  while(in >> v) input.push_back(v);
-  in.close();
+  vector<value_t> input; std::ifstream in("input");
+  value_t v; while(in >> v) input.push_back(v); in.close();
   
   SI = new SymInterpreter(input);
   pre_sym = 1;
   assert(!atexit(__CrestAtExit));
+}
+
+
+void __CrestCall(__CREST_ID id, __CREST_FUNC_ID fid){
+  cout << __func__ << endl;
+  SI->Call(id, fid);
 }
 
 
@@ -82,6 +85,7 @@ void __CrestApply1(__CREST_ID id, __CREST_OP op , __CREST_VAL val){
 
 
 void __CrestApply2(__CREST_ID id, __CREST_OP op , __CREST_VAL val){
+  cout << "myval" << val << endl;
   cout << __func__ << endl;  
   assert(__CREST_ADD <= op && op <= __CREST_CONCRETE);
   if (pre_sym) return;
@@ -93,9 +97,10 @@ void __CrestApply2(__CREST_ID id, __CREST_OP op , __CREST_VAL val){
 }
 
 
-void __CrestCall(__CREST_ID id, __CREST_FUNC_ID fid){
+
+void __CrestHandleReturn(__CREST_ID id, __CREST_VAL val){
   cout << __func__ << endl;
-  SI->Call(id, fid);
+  if (!pre_sym) SI->HandleReturn(id, val);
 }
 
 void __CrestReturn(__CREST_ID id){

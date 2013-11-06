@@ -23,7 +23,7 @@
 #define __CREST_BOOL unsigned char
 
 //corresponding value in kOpTable in .cc
-typedef enum {
+enum {
   /* binary arithmetic */
   __CREST_ADD       =  0,
   __CREST_SUBTRACT  =  1,
@@ -54,7 +54,6 @@ typedef enum {
   __CREST_L_NOT     = 21,
 };
 
-
 /*
  * Shortcut to indicate that a function should be skipped during instrumentation
  */
@@ -75,6 +74,7 @@ EXTERN void __CrestClearStack(__CREST_ID) __SKIP;
 EXTERN void __CrestApply1(__CREST_ID, __CREST_OP, __CREST_VAL) __SKIP;
 EXTERN void __CrestApply2(__CREST_ID, __CREST_OP, __CREST_VAL) __SKIP;
 
+EXTERN void __CrestHandleReturn(__CREST_ID, __CREST_VAL) __SKIP;
 EXTERN void __CrestCall(__CREST_ID, __CREST_FUNC_ID) __SKIP;
 EXTERN void __CrestReturn(__CREST_ID) __SKIP;
 EXTERN void __CrestBranch(__CREST_ID, __CREST_BRANCH_ID, __CREST_BOOL) __SKIP;

@@ -7,15 +7,19 @@ namespace crest{
     stack_.reserve(16);
   }
 
-  //Vu: diff than orig
   SymInterpreter::SymInterpreter(const vector<value_t> &input)
     : SymInterpreter(){
+
+    cout << __func__ << "(input: " << container2str(input) << ")" << endl;
+
     ex_.mutable_inputs()->assign(input.begin(), input.end());
   }
 
-  void SymInterpreter::ClearStack(id_t id){
-    //tvn unused id
-    cout << __func__ << endl;
+  void SymInterpreter::ClearStack(id_t id_unused){
+    cout << __func__ 
+	 << "(id " << id_unused
+	 << ")\n";
+
 
     for(const auto &s: stack_) delete s.expr;
     stack_.clear();
@@ -25,9 +29,10 @@ namespace crest{
 
   void SymInterpreter::Load(id_t id, addr_t addr, value_t val){
     cout << __func__ 
-	 << " id " << id 
+	 << "(id " << id 
 	 << ", addr " << addr 
-	 << ", val " << val << endl;
+	 << ", val " << val 
+	 << ")\n";
 
     const auto &it = mem_.find(addr);
     if(it == mem_.end()) PushConcrete(val);
@@ -40,7 +45,10 @@ namespace crest{
 
   
   void SymInterpreter::Store(id_t id, addr_t addr){
-    cout << __func__ << endl;
+    cout << __func__ 
+	 << "(id " << id 
+	 << ", addr " << addr 
+	 << ")\n";
 
     assert(stack_.size()>0);
     
@@ -63,7 +71,11 @@ namespace crest{
 
 
   void SymInterpreter::ApplyUnaryOp(id_t id , unary_op_t op, value_t val){
-    cout << __func__ << endl;
+    cout << __func__ 
+	 << "(id " << id 
+	 << ", op " << op 
+	 << ", val " << val
+	 << ")\n";
 
     assert(stack_.size() >= 1);
     auto &a = stack_.back();
@@ -91,19 +103,19 @@ namespace crest{
   }
 
   void SymInterpreter::ApplyBinaryOp(id_t id , binary_op_t op, value_t val){
-    cout << __func__ << endl;
+
+    cout << __func__ 
+	 << "(id " << id 
+	 << ", op " << op 
+	 << ", val " << val
+	 << ")\n";
 
     assert(stack_.size() >= 2);
     auto &a = *(stack_.rbegin()+1);
     auto &b = stack_.back();
     
-    cout << "a conc " << a.concrete; 
-    if (a.expr) cout << ", xpr " << *a.expr; 
-    cout << endl;
-    cout << "b conc " << a.concrete; 
-    if (b.expr) cout << ", xpr " << *b.expr; 
-    cout << endl;
-
+    cout << StackElem2str(a) << endl;
+    cout << StackElem2str(b) << endl;
 
     if (a.expr || b.expr){
       switch(op){
@@ -147,7 +159,6 @@ namespace crest{
 	  *a.expr *= b.concrete;
 	  delete b.expr;
 	}
-	cout << "res " << *a.expr  << endl;
 	break;
 
       case c_ops::SHIFT_L: /*tvn why*/
@@ -160,8 +171,9 @@ namespace crest{
 	break;
 
       default:
-	delete a.expr; //a.expr = nullptr;
-	delete b.expr; b.expr = nullptr;
+	cout <<"UNSUPPORTED" << endl;
+	delete a.expr; a.expr = nullptr;
+	delete b.expr; //b.expr = nullptr;
       }
     }
 
@@ -175,17 +187,21 @@ namespace crest{
 
 
   void SymInterpreter::ApplyCompareOp(id_t id , compare_op_t op, value_t val){
-    cout << __func__ << endl;
+    cout << __func__ 
+	 << "(id " << id 
+	 << ", op " << op 
+	 << ", val " << val
+	 << ")\n";
 
     assert(stack_.size() >= 2);
     auto &a = *(stack_.rbegin()+1);
     auto &b = stack_.back();
 
-    if (a.expr) cout << "a " << *a.expr << endl;
-    if (b.expr) cout << "b " << *b.expr << endl; 
+    cout << StackElem2str(a) << endl;
+    cout << StackElem2str(b) << endl;
 
     if(a.expr || b.expr){
-      //symbolic a -= b, why?  I think so that we have a <= b ==> a-b <= 0
+      //symbolic a cop b => a-b 
       if(a.expr == nullptr){
 	b.expr->Negate();
 	std::swap(a,b);
@@ -203,11 +219,9 @@ namespace crest{
 	ClearPredRegister();
 	delete a.expr;
       }
-      
       a.expr = nullptr;
-
     }
-    
+
     a.concrete = val;
     stack_.pop_back();
 
@@ -215,26 +229,45 @@ namespace crest{
   }
 
 
-  void SymInterpreter::Call(id_t id, func_id_t fid){
-    cout << __func__ << endl;
+  void SymInterpreter::Call(id_t id_unused, func_id_t fid_unused){
+    cout << __func__ 
+	 << "(id " << id_unused << ", fid " << fid_unused << ")" << endl;
 
-    //tvn: id, fid unused
     ex_.mutable_path()->Push(kCallId);
 
     DumpMemory();
   }
 
-  void SymInterpreter::Return(id_t id){
-    cout << __func__ << endl;
+  void SymInterpreter::Return(id_t id_unused){
+    cout << __func__ << "(id "<< id_unused << ")" << endl;
 
-    //tvn: id unused
     ex_.mutable_path()->Push(kReturnId);
     assert(stack_.size() <= 1);
     fun_ret_val_ = (stack_.size() == 1);
   }
 
-  void SymInterpreter::Branch(id_t id, branch_id_t bid, bool pred_val){
+  void SymInterpreter::HandleReturn(id_t id, value_t val){
     cout << __func__ << endl;
+    
+    if (fun_ret_val_){
+      //returned from instrumented func so stack contains exactly 1 elem
+      assert(stack_.size() == 1);
+    }
+    else{
+      //return from uninstrumeted func, so stack contains args to that func
+      ClearStack(-1);
+      PushConcrete(val);
+    }
+    DumpMemory();
+  }
+
+  void SymInterpreter::Branch(id_t id, branch_id_t bid, bool pred_val){
+    cout << __func__ 
+	 << "(id " << id 
+	 << ", bid " << bid
+	 << ", pred_val " << pred_val
+	 << ")\n";
+
 
     assert(stack_.size() == 1);
     stack_.pop_back();
@@ -245,8 +278,12 @@ namespace crest{
 
 
   value_t SymInterpreter::NewInput(type_t type, addr_t addr){
-    cout << __func__ << endl;
-    cout << "mem size " << mem_.size() << ", n_inpus " << n_inputs_ << endl;
+    cout << __func__ 
+	 << "(type " << type
+	 << ", addr " << addr
+	 << ")\n";
+
+    cout << "mem size " << mem_.size() << ", n_inputs " << n_inputs_ << endl;
     mem_[addr] = new SymExpr(1, n_inputs_);
     cout << *mem_[addr] << endl;
 
@@ -267,20 +304,20 @@ namespace crest{
   }
 
   void SymInterpreter::PushConcrete(value_t val){
-    cout << __func__ << endl;
-    cout << val << endl;
+    cout << __func__ << "(val " << val << ")" << endl;
     PushSymbolic(nullptr, val);
   }
   
   void SymInterpreter::PushSymbolic(SymExpr *expr, value_t val){
-    cout << __func__ << endl;
+    string s;
+    if (expr) s = expr->str();
+    else s = "null";
+    cout << __func__ << "(expr " << s << ", val " << val << ")" << endl;
     
     stack_.push_back(StackElem());
     auto &se = stack_.back();
     se.expr = expr;
     se.concrete = val;
-    if (se.expr) cout << *se.expr << endl;
-    cout << se.concrete << endl;
   }
 
   void SymInterpreter::ClearPredRegister(){
@@ -291,19 +328,29 @@ namespace crest{
 
   void SymInterpreter::DumpMemory(){
     cout << __func__ << endl;
+    cout << "fun_ret_val " << fun_ret_val_
+	 << ", n_inputs" << n_inputs_;
+
+    cout << ", pred " ;
+    if (pred_)
+      cout << *pred_ << endl;
+    else
+      cout << "null" << endl;
+
+    cout << "ex " << ex_ << endl;
+
     cout << "mem \n" ;
     for(const auto &m: mem_)
       cout << m.first << ": " << *m.second << 
 	" [" << *(int *)m.first << "]" << endl;
 
-    cout<< "\nstack \n";
+    cout<< "stack \n";
     for (size_t i= 0 ; i < stack_.size(); ++i){
       string s = "";
-      if(stack_[i].expr)s = stack_[i].expr->str();
-      else if(i == stack_.size() - 1 && pred_)s = pred_->str();
+      if(i == stack_.size() - 1 && pred_) s = ", pred " + pred_->str();
 
-      cout << "s" << i << ": " << stack_[i].concrete << " [" << s << "]";
-      if((i == stack_.size() - 1) && fun_ret_val_) cout << "(RET VAL)";
+      cout << i << " " << StackElem2str(stack_[i]) << s;
+      if((i == stack_.size() - 1) && fun_ret_val_) cout << " (RET VAL)";
       cout << "\n";
     }
     if(stack_.empty() && fun_ret_val_) cout << "MISSING RET VAL" ;
