@@ -10,25 +10,25 @@ LOADLIBES = -lyices -lz3
 
 BASE_LIBS = 	run_crest/basic_types.o \
 		run_crest/sym.o \
-		run_crest/sym_interpreter.o \
-		run_crest/yices_solver.o
+		run_crest/yices_solver.o \
+		run_crest/sym_interpreter.o
 
 
 all: 	libcrest/libcrest.a \
-	run_crest/run_crest_vn \
+	run_crest/concolic_search \
 	install
 
 libcrest/libcrest.a: libcrest/crest.o $(BASE_LIBS)
 	$(AR) rsv $@ $^
 
-run_crest/run_crest_vn: run_crest/concolic_search.o $(BASE_LIBS)
+run_crest/concolic_search: $(BASE_LIBS)
 
 
 #tools/print_execution: $(BASE_LIBS)
 
 install:
 	cp libcrest/libcrest.a ../lib
-	cp run_crest/run_crest_vn ../bin
+	cp run_crest/concolic_search ../bin/run_crest_vn
         #cp process_cfg/process_cfg ../bin
         #cp tools/print_execution ../bin
 	cp libcrest/crest.h ../include

@@ -8,6 +8,25 @@ namespace crest{
   }
 
   const char* op_str[] = {"==", "!=", ">" , "<=", "<", ">="};
+  // std::map<const compare_op_t, const string> op_str = 
+  //   {{compare_op_t::EQ,  "=="}, 
+  //    {compare_op_t::NEQ, "!="},
+  //    {compare_op_t::GT,  ">" }, 
+  //    {compare_op_t::LE,  "<="}, 
+  //    {compare_op_t::LT,  "<" }, 
+  //    {compare_op_t::GE,  ">="}};
+
+  // std::map<const compare_op_t, const compare_op_t> op_neg=
+  //   {{compare_op_t::EQ,  compare_op_t::NEQ }, 
+  //    {compare_op_t::NEQ, compare_op_t::EQ  },
+  //    {compare_op_t::GT,  compare_op_t::LE  }, 
+  //    {compare_op_t::LE,  compare_op_t::GT  }, 
+  //    {compare_op_t::LT,  compare_op_t::GE  }, 
+  //    {compare_op_t::GE,  compare_op_t::LT  }};
+
+  // const compare_op_t NegateCompareOp(compare_op_t op){
+  //   return op_neg[op];
+  // }
 
   const char* kMinValueStr[] = {
     "0",

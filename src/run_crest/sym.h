@@ -4,6 +4,7 @@
 #include <sstream>
 #include <map>
 #include <set>
+#include <algorithm>
 #include "basic_types.h"
 
 namespace crest{
@@ -11,9 +12,17 @@ namespace crest{
   class SymExpr{
   public:
     explicit SymExpr(value_t);
-    explicit SymExpr(value_t, var_t);
+    SymExpr(value_t, var_t);
+    SymExpr(const SymExpr &);
     ~SymExpr();
+
+    void Serialize(std::string *) const;
     bool Parse(std::istream &s);
+
+    void Negate(){
+      const_ = -const_;
+      for(auto &c: coeff_) c.second = -c.second;
+    }
 
     void AppendVars(std::set<var_t> *vars) const{
       for (const auto &c: coeff_) vars->insert(c.first);
@@ -28,31 +37,50 @@ namespace crest{
       return false;
     }
 
-    bool isConcrete() const {return this->coeff_.empty();}
+    bool IsConcrete() const {return coeff_.empty();}
 
-    value_t const_term() const {return this->const_;}
-    const std::map<var_t,value_t>& terms() const {return this->coeff_;}
+    value_t const_term() const {return const_;}
+    const std::map<var_t,value_t>& terms() const {return coeff_;}
 
     friend std::ostream& operator<< (std::ostream &os, const SymExpr &e){
-      os << e.const_term() << " + " << e.str() ;
+      os << e.str();
       return os;
     }
 
     const string str() const{
       std::stringstream ss;
-      size_t i = 0;
+      auto i = coeff_.size();
       for (const auto &c: coeff_) {
-	ss << c.second << "*" << "x" << c.first;
-	if (++i < coeff_.size()) ss << " + ";
+	if (c.second == 0) continue;
+	if (c.second != 1) ss << c.second << "*";
+	ss << "x" << c.first ;
+	if (--i > 0) ss << " + ";;
       }
+      if (const_ != 0){
+	if (coeff_.size() > 0) ss << " + ";
+	ss << const_;
+      }
+
       return ss.str();
+    }
+
+    const SymExpr &operator += (const SymExpr &);
+    const SymExpr &operator -= (const SymExpr &);
+
+    const SymExpr &operator += (const value_t &c){const_ += c; return *this;}
+    const SymExpr &operator -= (const value_t &c){const_ -= c; return *this;}
+    const SymExpr &operator *= (const value_t &c){
+      if (c == 0){coeff_.clear(); const_=0;}
+      else{
+	for(auto &co: coeff_) co.second *= c;
+	const_ *= c;
+      }
+      return *this;
     }
 
     bool operator==(const SymExpr &o) const{
       return const_ == o.const_ && coeff_ == o.coeff_;
     }
-
-
 
   private:
     value_t const_;
@@ -62,33 +90,32 @@ namespace crest{
   class SymPred{
   public:
     SymPred();
+    SymPred(compare_op_t, SymExpr *);
     ~SymPred();
+
+    void Serialize(std::string *) const;
     bool Parse(std::istream &);
 
-    void Negate(){
-      op_ = NegateCompareOp(op_);
-    }
+    void Negate(){op_ = NegateCompareOp(op_);}
 
-    void AppendVars(std::set<var_t> *vars) const{
-      expr_->AppendVars(vars);
-    }
+    void AppendVars(std::set<var_t> *vars) const{expr_->AppendVars(vars);}
 
     bool DependsOn(const std::map<var_t, type_t> &vars) const{
-      return this->expr_->DependsOn(vars);
-    };
-
-    compare_op_t op() const {return this->op_;}
-    const SymExpr &expr() const {return *this->expr_;}
+      return expr_->DependsOn(vars);
+    }
+      
+    compare_op_t op() const {return op_;}
+    const SymExpr &expr() const {return *expr_;}
     friend std::ostream& operator<< (std::ostream &os, const SymPred &p){
-
-      os << p.expr() << " " << op_str[p.op()] << " 0";
+      os << p.str();
       return os;
     }
+
+    const string str() const{ return expr_->str() + " " + op_str[op_] + " 0"; }
 
     bool operator==(const SymPred &o) const{
       return (op_ == o.op_) && (*expr_ == *o.expr_);
     }
-
 
   private:
     compare_op_t op_;
@@ -100,16 +127,19 @@ namespace crest{
     SymPath();
     ~SymPath();
 
+    void Serialize(std::string *) const;
     bool Parse(std::istream &s);
 
-    const vector<branch_id_t> &branches() const {return this->branches_;}
-    const vector<SymPred *> &constraints() const {return this->constraints_;}
-    const vector<size_t> &constraints_idx() const {return this->constraints_idx_;}
+    void Push(branch_id_t);
+    void Push(branch_id_t, SymPred *pred);
+
+    const vector<branch_id_t> &branches() const {return branches_;}
+    const vector<SymPred *> &constraints() const {return constraints_;}
+    const vector<size_t> &constraints_idx() const {return constraints_idx_;}
 
     friend std::ostream& operator<< (std::ostream &os, const SymPath &p){
       os << "(path) " << "branches " << container2str(p.branches()) << endl;
-      os << "constraints " << endl ;
-      os << container2str(p.constraints()) << endl;
+      os << "constraints " << container2str(p.constraints()) << endl;
       os << "constraints_idx " << container2str(p.constraints_idx());
       return os;
     }
@@ -126,16 +156,18 @@ namespace crest{
   public:
     SymExec();
     ~SymExec();
+
+    void Serialize(std::string *) const;
     bool Parse(std::istream &s);
 
-    const std::map<var_t, type_t> &vars() const {return this->vars_;}
-    const vector<value_t> &inputs() const {return this->inputs_;}
-    const SymPath &path() const {return this->path_;} 
+    const std::map<var_t, type_t> &vars() const {return vars_;}
+    const vector<value_t> &inputs() const {return inputs_;}
+    const SymPath &path() const {return path_;} 
 
 
-    std::map<var_t, type_t> *mutable_vars(){return &this->vars_;}
-    vector<value_t> *mutable_inputs(){return &this->inputs_;}
-    SymPath *mutable_path(){return &this->path_;} 
+    std::map<var_t, type_t> *mutable_vars(){return &vars_;}
+    vector<value_t> *mutable_inputs(){return &inputs_;}
+    SymPath *mutable_path(){return &path_;} 
 
     friend std::ostream& operator<< (std::ostream &os, const SymExec &e){
       os << "(exec) "

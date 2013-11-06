@@ -19,13 +19,13 @@ namespace crest{
     std::ifstream in("branches");
     assert(in);
 
-    function_id_t fid; 
+    func_id_t fid; 
     int nBranches;
 
     branch_id_t b1,b2;
     while(in >> fid >> nBranches){
       branch_count_.push_back(2*nBranches);
-      for (int i = 0; i < nBranches; ++i){
+      for (auto i = 0; i < nBranches; ++i){
 	assert(in >> b1 >> b2);
 	branches_.push_back(b1);
 	branches_.push_back(b2);
@@ -33,7 +33,7 @@ namespace crest{
     }
     in.close();
     
-    int max_branch_id = *std::max_element(branches_.begin()+1, branches_.end());
+    auto max_branch_id = *std::max_element(branches_.begin()+1, branches_.end());
     max_branch_id++;
 
     /*paired_branch[i]=j, paired_branch[j]=i ,  
@@ -47,7 +47,7 @@ namespace crest{
     /*branch_function[i] == j  means branch j belongs to function i (ignore all j=0)*/
     branch_function_.resize(max_branch_id);
     size_t i = 0;
-    for (function_id_t j = 0; j < branch_count_.size(); ++j){
+    for (func_id_t j = 0; j < branch_count_.size(); ++j){
       for (size_t k = 0 ; k < branch_count_.at(j); k++){
 	branch_function_[branches_.at(i++)] = j;
       }
@@ -95,12 +95,12 @@ namespace crest{
 
   
   bool Search::UpdateCoverage(const SymExec &ex){
-    return UpdateCoverage(ex, NULL);
+    return UpdateCoverage(ex, nullptr);
   }
 
   bool Search::UpdateCoverage(const SymExec &ex, std::set<branch_id_t> *new_branches){
-    const unsigned int prev_covered_ = n_covered_branches_;
-    const vector<branch_id_t> &ex_branches = ex.path().branches();
+    const auto prev_covered_ = n_covered_branches_;
+    const auto &ex_branches = ex.path().branches();
 
     cout << "Search:** UpdateCoverage **" << endl;
     print_protected_members();
@@ -143,7 +143,7 @@ namespace crest{
   }
 
   void Search::WriteCoverageToFile(){
-    string file = "coverage";
+    const auto file = "coverage";
     std::stringstream ss;
     for (const auto &b: branches_){
       if(total_covered_branches_.at(b))
@@ -153,10 +153,10 @@ namespace crest{
   }
   
   void Search::WriteInputToFile(const vector<value_t>&input){
-    string file = "input";
+    const auto file = "input";
     std::stringstream ss;
-    for (const auto &inp: input)
-      ss << inp << endl;
+    for (const auto &inp: input) ss << inp << endl;
+
     write_file(file,ss.str());
   }
   
@@ -173,7 +173,7 @@ namespace crest{
 
     WriteInputToFile(inputs);
 
-    bool found_goal = false;
+    auto found_goal = false;
     FILE *fin; char buff[512];
     fin = popen(prog_.c_str(),"r");
 
@@ -194,7 +194,7 @@ namespace crest{
 
     //Read in execution
     std::ifstream in("szd_execution", std::ios::in | std::ios::binary);
-    assert (in && ex->Parse(in));
+    assert(in && ex->Parse(in));
     in.close();
     return false;
   }
@@ -208,10 +208,10 @@ namespace crest{
     cout << "branch_idx " << branch_idx << endl;
     cout << "input " << container2str(*input) << endl;
 
-    const vector<SymPred *>& constraints = ex.path().constraints();
+    const auto &constraints = ex.path().constraints();
     
     //Optimization
-    for(int i = static_cast<int>(branch_idx) - 1; i >= 0; --i){
+    for(auto i = static_cast<int>(branch_idx) - 1; i >= 0; --i){
       if (*constraints.at(branch_idx) == *constraints.at(i)){
 	cout << "*********** optimized, idx " << branch_idx << " = " << i << endl;
 	return false;
@@ -226,7 +226,7 @@ namespace crest{
     cout << ", after neg " << *constraints[branch_idx] << endl;
 
     std::map<var_t,value_t>sol;
-    bool success = YicesSolver::IncrementalSolve(ex.inputs(), ex.vars(),cs, &sol);
+    auto success = YicesSolver::IncrementalSolve(ex.inputs(), ex.vars(),cs, &sol);
     constraints[branch_idx]->Negate();
     
     if (success){
@@ -282,8 +282,8 @@ namespace crest{
     else{
       return DFS(0, max_depth_, ex);
     }
-
   }
+
   bool BoundedDepthFirstSearch::
   DFS(const size_t &pos, int depth, SymExec &prev_exec){
 
@@ -292,7 +292,7 @@ namespace crest{
 
     SymExec cur_exec;
     vector<value_t> input;
-    const SymPath& path = prev_exec.path();
+    const auto& path = prev_exec.path();
 
     for (size_t i = pos; (i < path.constraints().size()) && (depth > 0); ++i){
       cout << "DFS at cst " << i << "/" << path.constraints().size()-1 << endl;
@@ -307,7 +307,7 @@ namespace crest{
       }
 
       //check for prediction failure
-      size_t branch_idx = path.constraints_idx()[i];
+      auto branch_idx = path.constraints_idx()[i];
       if (!CheckPrediction(prev_exec, cur_exec, branch_idx)){
 	cout << "Prediction failed" << endl;
 	continue;
@@ -323,3 +323,41 @@ namespace crest{
   }
 
 }//namespace crest
+
+
+
+
+int main(int argc, char* argv[]){
+  if (argc < 4) {
+    printf("Syntax: run_crest <program> "
+	   "<number of iterations> "
+	   "-<strategy> [strategy options]\n");
+    printf("  Strategies include: "
+	   "dfs\n");
+    return 1;
+  }
+  
+  auto prog = argv[1];
+  const auto n_iters = atoi(argv[2]);
+  const string search_type = argv[3];
+  
+  crest::Search *strategy;
+  if (search_type == "-dfs"){
+    if(argc == 4){
+      strategy = new 
+	crest::BoundedDepthFirstSearch(prog, n_iters, 1000000);
+       
+    } else{
+      strategy = new 
+	crest::BoundedDepthFirstSearch(prog, n_iters, atoi(argv[4]));
+    }
+  }
+  else {
+    printf("Err: Unknown search strategy: %s\n", search_type.c_str());
+    return 1;
+  }
+  strategy->run();
+  delete strategy;
+
+  return 0;
+}

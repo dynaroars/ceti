@@ -15,7 +15,7 @@ namespace crest{
 
     vector<branch_id_t> branches_;
     vector<branch_id_t> paired_branch_;
-    vector<function_id_t> branch_function_;
+    vector<func_id_t> branch_function_;
     vector<unsigned int> branch_count_;
 
     vector<bool> covered_branches_;
@@ -48,7 +48,6 @@ namespace crest{
   };
 
   class BoundedDepthFirstSearch : public Search{
-
   public:
     explicit BoundedDepthFirstSearch(const string &, const int &, const int &);
     virtual ~BoundedDepthFirstSearch();

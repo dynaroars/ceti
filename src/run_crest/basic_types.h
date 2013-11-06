@@ -12,7 +12,7 @@
 #include <vector>
 #include <map>
 #include <cassert>
-
+#include <type_traits>
 
 using std::string;
 using std::vector;
@@ -22,16 +22,25 @@ using std::endl;
 namespace crest{
   typedef int branch_id_t;
   typedef long long int value_t;
-  typedef unsigned int function_id_t;
+  typedef unsigned int func_id_t;
   typedef unsigned int var_t;
   typedef long long int value_t;
   typedef unsigned long int addr_t;
 
+  static const branch_id_t kCallId = -1;
+  static const branch_id_t kReturnId = -2;
+
   namespace c_ops{
     enum compare_op_t {EQ = 0, NEQ = 1, GT = 2, LE = 3, LT = 4, GE = 5};
-
+    //enum class compare_op_t_m {EQ_m = 0, NEQ_m = 1, GT_m = 2, LE_m = 3, LT_m = 4, GE_m = 5};
+    enum binary_op_t {ADD, SUBTRACT, MULTIPLY, SHIFT_L, CONCRETE};
+    enum unary_op_t {NEGATE, LOGICAL_NOT, BITWISE_NOT};
   }
   using c_ops::compare_op_t;
+  using c_ops::binary_op_t;
+  using c_ops::unary_op_t;
+
+  //using c_ops::compare_op_t_m;
 
   compare_op_t NegateCompareOp(compare_op_t op);
 
@@ -47,6 +56,7 @@ namespace crest{
   value_t CastTo(value_t val, type_t type);
 
   extern const char* op_str[];
+  //extern std::map<const compare_op_t, const string> op_str;
   extern const char* kMinValueStr [];
   extern const char* kMaxValueStr [];
 
@@ -54,27 +64,42 @@ namespace crest{
   extern const value_t kMaxValue [];
   extern const size_t kByteSize[];
 
+
   template<typename T>
-    const string container2str(const T &ms){
+    constexpr string container2str(const T &ms){
     std::stringstream ss;
-    size_t i = 0;
+    auto i = ms.size();
     ss << ms.size() << " [" ;
-    for(const auto &it: ms){
-      ss << it;
-      if (++i < ms.size()) ss << ", ";
+    for(const auto &m: ms){
+      ss << m;
+      if (--i) ss << ", ";
     }
     ss << "]";
     return ss.str();
   }
 
+  /* template<typename T1, typename T2> */
+  /*   constexpr string container2str(const T1 &ms){ */
+  /*   std::stringstream ss; */
+  /*   auto i = ms.size(); */
+  /*   ss << ms.size() << " [" ; */
+  /*   for(const T2 &m: ms){ */
+  /*     if (std::is_pointer<T2>::value) ss << *m; */
+  /*     else ss << m; */
+  /*     if (--i) ss << ", "; */
+  /*   } */
+  /*   ss << "]"; */
+  /*   return ss.str(); */
+  /* } */
+
   template<typename T>
-    const string container2str(const vector<T *> &ms){
+    constexpr string container2str(const vector<T *> &ms){
     std::stringstream ss;
-    size_t i = 0;
+    auto i = ms.size();
     ss << ms.size() << " [" ;
-    for(const auto &it: ms){
-      ss << *it;
-      if (++i < ms.size()) ss << ", ";
+    for(const auto &p: ms){
+      ss << *p;
+      if (--i) ss << ", ";
     }
     ss << "]";
     return ss.str();
@@ -82,14 +107,14 @@ namespace crest{
 
 
   template<typename T1, typename T2>
-    const string container2str(const std::map<T1,T2> &mmap){
+    constexpr string container2str(const std::map<T1,T2> &mmap){
     std::stringstream ss;
-    size_t i = 0;
+    auto i = mmap.size();
     
     ss << mmap.size() << " [" ;
     for(const auto &it: mmap){
       ss <<  "(" << it.first << "," << it.second << ")";
-      if (++i < mmap.size()) ss << ", ";
+      if (--i) ss << ", ";
     }
     ss << "]";
     return ss.str();

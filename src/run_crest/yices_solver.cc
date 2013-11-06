@@ -25,10 +25,10 @@ namespace crest{
     //in a symbolic predicate
     std::set<var_t> tvars;
     vector<std::set<var_t> > depends(vars.size());
-    for(auto c: constraints){
+    for(const auto &c: constraints){
       tvars.clear();
       c->AppendVars(&tvars);
-      for(auto j:tvars){
+      for(const auto &j:tvars){
        	depends[j].insert(tvars.begin(),tvars.end());
       }
     }
@@ -43,19 +43,18 @@ namespace crest{
     std::queue<var_t> Q;
     tvars.clear();
     constraints.back()->AppendVars(&tvars);
-    for (auto j:tvars){
+    for(const auto &j:tvars){
       dependent_vars.insert(*vars.find(j));
       Q.push(j);
     }
     cout << "dependent vars " << container2str(dependent_vars) << endl;
 
-
     //Run BFS
     while (!Q.empty()){
-      var_t i = Q.front();
+      auto i = Q.front();
       cout << "i " << i << endl;
       Q.pop();
-      for (auto j:depends[i]){
+      for (const auto &j:depends[i]){
 	if(dependent_vars.find(j) == dependent_vars.end()){
 	  Q.push(j);
 	  dependent_vars.insert(*vars.find(j));
@@ -66,7 +65,7 @@ namespace crest{
     
     //Generate list of dependent constraints
     vector<const SymPred*> dependent_constraints;
-    for (auto c:constraints){
+    for (const auto &c: constraints){
       if (c->DependsOn(dependent_vars)){
 	dependent_constraints.push_back(c);
       }
@@ -78,7 +77,7 @@ namespace crest{
     //Run SMT solver
 
     sol->clear();
-    bool result = SolveZ3(dependent_vars, dependent_constraints, sol);
+    auto result = SolveZ3(dependent_vars, dependent_constraints, sol);
 
     // solz3.clear();    
     // bool resultz3 = SolveZ3(dependent_vars, dependent_constraints, &solz3);
@@ -87,11 +86,11 @@ namespace crest{
     if (result){
       cout << "solved" << endl;
       //merge in constrained vars
-      for(auto c: constraints){
+      for(const auto &c: constraints){
 	c->AppendVars(&tvars);
       }
       cout << "tvars " << container2str(tvars) << endl;
-      for(auto v: tvars){
+      for(const auto &v: tvars){
 	//if v not found in new sol, use v of old sol
 	if (sol->find(v) == sol->end()){
 	  sol->insert(make_pair(v, old_sol[v]));
@@ -112,18 +111,18 @@ namespace crest{
     cout << "vars " << container2str(vars) << endl;
     cout << "constraints " << container2str(constraints) << endl;
 
-    Z3_config cfg = Z3_mk_config();
+    auto cfg = Z3_mk_config();
     Z3_set_param_value(cfg, "MODEL", "true");
-    Z3_context ctx = Z3_mk_context(cfg);
+    auto ctx = Z3_mk_context(cfg);
     Z3_del_config(cfg);
-    Z3_sort int_ty = Z3_mk_int_sort(ctx);
+    auto int_ty = Z3_mk_int_sort(ctx);
 
     //make variables
     string v_name;
     std::map<var_t, Z3_ast> z3_vars;
     for (const auto &v: vars){
       v_name = "x" + std::to_string(v.first) ;
-      Z3_ast v_ = 
+      auto v_ = 
 	Z3_mk_const(ctx, Z3_mk_string_symbol(ctx, v_name.c_str()), int_ty);
       z3_vars[v.first]= v_ ; 
     }
@@ -134,18 +133,16 @@ namespace crest{
     }
 
     //make constraints
-    Z3_ast zero = Z3_mk_int(ctx, 0, int_ty);
+    auto zero = Z3_mk_int(ctx, 0, int_ty);
     vector<Z3_ast> terms;
     for (const auto &c: constraints){
-
       terms.clear();
       terms.push_back(Z3_mk_int(ctx, c->expr().const_term(), int_ty));
       for (auto t: c->expr().terms()){
-    	Z3_ast prod[2]  = {z3_vars[t.first], 
-			  Z3_mk_int(ctx, t.second, int_ty)};
+    	Z3_ast prod[] {z3_vars[t.first], Z3_mk_int(ctx, t.second, int_ty)};
     	terms.push_back(Z3_mk_mul(ctx, 2, prod));
       }
-      Z3_ast e = Z3_mk_add(ctx, terms.size(), &terms.front());
+      auto e = Z3_mk_add(ctx, terms.size(), &terms.front());
 
       Z3_ast pred ;
       switch(c->op()){
@@ -165,13 +162,11 @@ namespace crest{
       Z3_assert_cnstr(ctx, pred);
     }
 
-
     Z3_model model = 0;
-    bool success = (Z3_check_and_get_model(ctx, &model) == Z3_L_TRUE);
+    auto success = (Z3_check_and_get_model(ctx, &model) == Z3_L_TRUE);
     if (success == Z3_L_TRUE){
       
       cout << "model\n" << Z3_model_to_string(ctx, model) << endl;
-
       int n_consts = Z3_get_model_num_constants(ctx, model);
       assert(n_consts == (int)vars.size());
 
@@ -179,10 +174,10 @@ namespace crest{
       sol->clear();      
       for (int i = 0; i < n_consts; ++i){
 	
-	Z3_func_decl cnst  = Z3_get_model_constant(ctx, model, i);
-	Z3_symbol name = Z3_get_decl_name(ctx, cnst);
-	Z3_ast a = Z3_mk_app(ctx, cnst, 0, 0);
-	Z3_ast v = a;
+	auto cnst = Z3_get_model_constant(ctx, model, i);
+	auto name = Z3_get_decl_name(ctx, cnst);
+	auto a = Z3_mk_app(ctx, cnst, 0, 0);
+	auto v = a;
 	Z3_eval(ctx, model, a, &v);
 
 	sscanf(Z3_get_symbol_string(ctx, name), "x%d", &idx);
