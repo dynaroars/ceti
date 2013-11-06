@@ -25,9 +25,26 @@ int buggy_is_upward_preferred(int inhibit, int up_sep, int down_sep,
   int bias;
   if(inhibit)
     //bias = down_sep; //fix: bias=up_sep+100
-    bias = fix2*up_sep+fix3;
+    bias = fix1+fix2*up_sep+fix3;
   else
     bias = up_sep;
+  if (bias > down_sep)
+    return 1;
+  else
+    return 0;
+
+}
+
+
+int buggy_is_upward_preferred2(int inhibit, int up_sep, int down_sep, 
+			       int fix1, int fix2, int fix3,
+			       int fix1_, int fix2_, int fix3_) {
+  //requires 2 fixes
+  int bias;
+  if(inhibit)
+    bias = fix2*up_sep+fix3;
+  else
+    bias = fix2_*up_sep+fix3_;
   if (bias > down_sep)
     return 1;
   else
@@ -45,13 +62,43 @@ void test_is_upward_preferred(){
   int max_int = 1000;
   if(-max_int<=fix1&&fix1<=max_int &&
      -max_int<=fix2&&fix2<=max_int &&
-     -max_int<=fix3&&fix3<=max_int){
+     -max_int<=fix3&&fix3<=max_int
+     ){
      
     if(buggy_is_upward_preferred(1,0,100 ,fix1,fix2,fix3) == 0 && 
        buggy_is_upward_preferred(1,11,110,fix1,fix2,fix3) == 1 && 
        buggy_is_upward_preferred(0,100,50,fix1,fix2,fix3) == 1 && 
        buggy_is_upward_preferred(1,-20,60,fix1,fix2,fix3) == 1 && 
        buggy_is_upward_preferred(0,0,10  ,fix1,fix2,fix3) == 0){
+      printf("GOAL!\n");
+      /*fix found*/
+    }
+  }
+}
+
+void test_is_upward_preferred2(){
+  int fix1,fix2,fix3,fix1_,fix2_,fix3_;
+  CREST_int(fix1);
+  CREST_int(fix2);
+  CREST_int(fix3);
+  CREST_int(fix1_);
+  CREST_int(fix2_);
+  CREST_int(fix3_);
+
+  int max_int = 1000;
+  if(-max_int<=fix1&&fix1<=max_int &&
+     -max_int<=fix2&&fix2<=max_int &&
+     -max_int<=fix3&&fix3<=max_int &&
+     -max_int<=fix1&&fix1_<=max_int &&
+     -max_int<=fix2&&fix2_<=max_int &&
+     -max_int<=fix3&&fix3_<=max_int
+     ){
+     
+    if(buggy_is_upward_preferred2(1,0,100 ,fix1,fix2,fix3,fix1_,fix2_,fix3_) == 0 && 
+       buggy_is_upward_preferred2(1,11,110,fix1,fix2,fix3,fix1_,fix2_,fix3_) == 1 && 
+       buggy_is_upward_preferred2(0,100,50,fix1,fix2,fix3,fix1_,fix2_,fix3_) == 1 && 
+       buggy_is_upward_preferred2(1,-20,60,fix1,fix2,fix3,fix1_,fix2_,fix3_) == 1 && 
+       buggy_is_upward_preferred2(0,0,10  ,fix1,fix2,fix3,fix1_,fix2_,fix3_) == 0){
       printf("GOAL!\n");
       /*fix found*/
     }
@@ -97,10 +144,12 @@ void test_calc(){
 
 int main(){
 
-  test_is_upward_preferred();
-  //test_calc();
-  //test_gcd();
-  //test_arr_init();
-  //test_arr_max();
+  /* test_is_upward_preferred2(); */
+  /* test_calc(); */
+  /* test_gcd(); */
+  /* test_arr_init(); */
+  test_arr_max();
+  //test_arr_copy();
+  //test_arr_2c_p1();
   return 0;
 }

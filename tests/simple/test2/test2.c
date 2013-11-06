@@ -2,11 +2,15 @@
 #include <stdio.h>
 
 void tvn_foo(int a, int b, int c, int d){
-  if (a == 5) {
-    if (b == 19) {
-      if (c == 7) {
-        if (d == 4) {
-          fprintf(stderr, "GOAL!\n");
+  int a1 = a+1;
+  if (a1 == 5) {  //3  ,  13  
+    int b1 = b + 2;  
+    if (b1 == 19) {  //5, 12
+      int c1 = c + 3 ;
+      if (c1 == 7) {  //7, 11
+	int d1 = d + 15;
+        if (d1 == 4) { //9, 10
+          fprintf(stdout, "GOAL!\n");
         }
       }
     }
