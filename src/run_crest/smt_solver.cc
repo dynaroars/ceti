@@ -1,15 +1,14 @@
 #include <set>
 #include <queue>
 
-#include "yices_solver.h"
-#include "yices_c.h"
+#include "smt_solver.h"
 #include "z3.h"
 
 using std::make_pair;
 
 namespace crest{
   
-  bool YicesSolver::
+  bool SMTSolver::
   IncrementalSolve(const vector<value_t> &old_sol,
   		   const std::map<var_t,type_t> &vars,
   		   const vector<const SymPred *> &constraints,
@@ -79,10 +78,6 @@ namespace crest{
     sol->clear();
     auto result = SolveZ3(dependent_vars, dependent_constraints, sol);
 
-    // solz3.clear();    
-    // bool resultz3 = SolveZ3(dependent_vars, dependent_constraints, &solz3);
-
-
     if (result){
       cout << "solved" << endl;
       //merge in constrained vars
@@ -104,7 +99,7 @@ namespace crest{
   }
   
 
-  bool YicesSolver::SolveZ3(const std::map<var_t, type_t> &vars,
+  bool SMTSolver::SolveZ3(const std::map<var_t, type_t> &vars,
 			    const vector<const SymPred *> &constraints,
 			    std::map<var_t,value_t> *sol){
     cout << __func__ << " Z3 " << z3_version() << endl;
@@ -196,106 +191,9 @@ namespace crest{
 
 
 
-  bool YicesSolver::Solve(const std::map<var_t, type_t> &vars,
-  			  const vector<const SymPred *> &constraints,
-  			  std::map<var_t,value_t> *sol){
-
-    cout << __func__ << endl;
-    cout << "vars " << container2str(vars) << endl;
-    cout << "constraints " << container2str(constraints) << endl;
-
-    yices_enable_log_file("yices_log");
-    yices_context ctx = yices_mk_context();
-    assert(ctx);
-
-    //type limits
-    vector<yices_expr> min_expr(c_types::LONG_LONG+1);
-    vector<yices_expr> max_expr(c_types::LONG_LONG+1);
-    
-    for (int i = c_types::U_CHAR; i<=c_types::LONG_LONG; ++i){
-      min_expr[i] = yices_mk_num_from_string(ctx, const_cast<char *>(kMinValueStr[i]));
-      assert(min_expr[i]);
-      max_expr[i] = yices_mk_num_from_string(ctx, const_cast<char *>(kMaxValueStr[i]));
-      assert(max_expr[i]);
-    }
-    
-    char int_ty_name[] = "int";
-    yices_type int_ty = yices_mk_type(ctx, int_ty_name);
-    assert(int_ty);
-
-    //var decl's
-    std::map<var_t, yices_var_decl> x_decl;
-    std::map<var_t, yices_expr> x_expr;
-    for (auto v:vars){
-      char buff[32];
-      const var_t vf = v.first, vs = v.second;
-      
-      snprintf(buff, sizeof(buff), "x%d", vf);
-      cout << "var " << buff << " (vf " << vf << ")" << endl;
-      x_decl[vf] = yices_mk_var_decl(ctx,buff,int_ty);  
-      x_expr[vf] = yices_mk_var_from_decl(ctx,x_decl[vf]);
-      assert(x_decl[vf]);
-      assert(x_expr[vf]);
-
-      yices_assert(ctx, yices_mk_ge(ctx,x_expr[vf], min_expr[vs]));
-      yices_assert(ctx, yices_mk_le(ctx,x_expr[vf], max_expr[vs]));
-    }
-
-    yices_expr zero = yices_mk_num(ctx,0);
-    assert(zero);
-
-    //constraints
-    vector<yices_expr> terms;
-    for(auto i: constraints){
-      cout << "constraint " << i << endl;
-      const SymExpr &se = i->expr();
-      terms.clear();
-      terms.push_back(yices_mk_num(ctx, se.const_term()));
-      for(auto j: se.terms()){
-  	yices_expr prod [2] = {x_expr[j.first], yices_mk_num(ctx, j.second)};
-  	terms.push_back(yices_mk_mul(ctx,prod,2));
-      }
-      yices_expr e = yices_mk_sum(ctx, &terms.front(), terms.size());
-
-      yices_expr pred;
-      cout << "op " << i->op() << endl;
-
-      switch(i->op()){
-      case c_ops::EQ: pred = yices_mk_eq(ctx, e, zero); break;
-      case c_ops::NEQ: pred = yices_mk_diseq(ctx, e, zero); break;
-      case c_ops::GT:  pred = yices_mk_gt(ctx, e, zero); break;
-      case c_ops::LE:  pred = yices_mk_le(ctx, e, zero); break;
-      case c_ops::LT:  pred = yices_mk_lt(ctx, e, zero); break;
-      case c_ops::GE:  pred = yices_mk_ge(ctx, e, zero); break; 
-      default:
-  	cout << "unknown comparison op: \n" << i->op() << endl;
-  	exit(1);
-      }
-      yices_assert(ctx, pred);
-    }
-    cout << "**** Context ****" << endl;
-    yices_dump_context(ctx);
-    cout << "*********" << endl;
-
-    bool success = (yices_check(ctx) == l_true);
-    if (success){
-      cout << "yices check ok\n";
-      sol->clear();
-      yices_model model = yices_get_model(ctx);
-      for(auto i:vars){
-  	long val;
-  	assert(yices_get_int_value(model, x_decl[i.first], &val));
-  	sol->insert(make_pair(i.first, val));
-      }
-    }
-    cout << "sol " << container2str(*sol) << endl;
-
-    yices_del_context(ctx);
-    return success;
-  }
 
 
-  const string YicesSolver::z3_version(){
+  const string SMTSolver::z3_version(){
     std::stringstream ss;
     unsigned major, minor, build, revision;
     Z3_get_version(&major, &minor, &build, &revision);

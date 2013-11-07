@@ -33,7 +33,7 @@ namespace crest{
   namespace c_ops{
     enum compare_op_t {EQ = 0, NEQ = 1, GT = 2, LE = 3, LT = 4, GE = 5};
     //enum class compare_op_t_m {EQ_m = 0, NEQ_m = 1, GT_m = 2, LE_m = 3, LT_m = 4, GE_m = 5};
-    enum binary_op_t {ADD, SUBTRACT, MULTIPLY, SHIFT_L, CONCRETE};
+    enum binary_op_t {ADD, SUBTRACT, MULTIPLY, DIVIDE, SHIFT_L, CONCRETE};
     enum unary_op_t {NEGATE, LOGICAL_NOT, BITWISE_NOT};
   }
   using c_ops::compare_op_t;
@@ -55,7 +55,7 @@ namespace crest{
 
   value_t CastTo(value_t val, type_t type);
 
-  extern const char* op_str[];
+  extern const string op_str[];
   //extern std::map<const compare_op_t, const string> op_str;
   extern const char* kMinValueStr [];
   extern const char* kMaxValueStr [];

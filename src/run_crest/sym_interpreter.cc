@@ -36,9 +36,7 @@ namespace crest{
 
     const auto &it = mem_.find(addr);
     if(it == mem_.end()) PushConcrete(val);
-    else {
-      PushSymbolic(new SymExpr(*it->second), val);
-    }
+    else PushSymbolic(new SymExpr(*it->second), val);
 
     DumpMemory();
   }
@@ -53,6 +51,8 @@ namespace crest{
     assert(stack_.size()>0);
     
     const auto &se = stack_.back();
+    stack_.pop_back();
+    
     if (se.expr){
       if(se.expr->IsConcrete()){
 	mem_.erase(addr);
@@ -62,7 +62,6 @@ namespace crest{
     }
     else mem_.erase(addr);
 
-    stack_.pop_back();
     ClearPredRegister();
 
     DumpMemory();
@@ -79,26 +78,21 @@ namespace crest{
 
     assert(stack_.size() >= 1);
     auto &a = stack_.back();
+    
     if (a.expr){
-      switch (op){
-
-      case c_ops::NEGATE:/*strange,  how do you negate a const or term ?*/
+      if (op == c_ops::NEGATE){
 	a.expr->Negate();
 	ClearPredRegister();
-	break;
-      case c_ops::LOGICAL_NOT:
-	if(pred_){
-	  pred_->Negate();
-	  break;
-	}
-      default:
+      }else if (op==c_ops::LOGICAL_NOT && pred_){
+	pred_->Negate();
+      }
+      else{
 	//concrete
 	delete a.expr;
 	a.expr = nullptr;
 	ClearPredRegister();
       }
     }
-
     a.concrete = val;
   }
 
@@ -111,9 +105,9 @@ namespace crest{
 	 << ")\n";
 
     assert(stack_.size() >= 2);
-    auto &a = *(stack_.rbegin()+1);
-    auto &b = stack_.back();
-    
+    auto &b = stack_.back(); stack_.pop_back();
+    auto &a = stack_.back();
+
     cout << StackElem2str(a) << endl;
     cout << StackElem2str(b) << endl;
 
@@ -170,6 +164,22 @@ namespace crest{
 	delete b.expr;
 	break;
 
+      // case c_ops::DIVIDE:
+      // 	cout << "DIVIDE" << endl;
+
+      // 	if (a.expr == nullptr){
+      // 	  cout << "gh0" << endl;
+      // 	  // std::swap(a,b);
+      // 	  // *a.expr /= b.concrete;
+      // 	  // break;
+      // 	}else if (b.expr == nullptr){
+      // 	  *a.expr /= b.concrete;
+      // 	  break;
+      // 	}else {
+      // 	  cout << "gh2" << endl;
+      // 	}
+	
+
       default:
 	cout <<"UNSUPPORTED" << endl;
 	delete a.expr; a.expr = nullptr;
@@ -178,10 +188,7 @@ namespace crest{
     }
 
     a.concrete = val;
-    DumpMemory();
-    stack_.pop_back();
     ClearPredRegister();
-
     DumpMemory();
   }
 
@@ -194,14 +201,13 @@ namespace crest{
 	 << ")\n";
 
     assert(stack_.size() >= 2);
-    auto &a = *(stack_.rbegin()+1);
-    auto &b = stack_.back();
+    auto &b = stack_.back(); stack_.pop_back();
+    auto &a = stack_.back();
 
     cout << StackElem2str(a) << endl;
     cout << StackElem2str(b) << endl;
 
     if(a.expr || b.expr){
-      //symbolic a cop b => a-b 
       if(a.expr == nullptr){
 	b.expr->Negate();
 	std::swap(a,b);
@@ -223,8 +229,6 @@ namespace crest{
     }
 
     a.concrete = val;
-    stack_.pop_back();
-
     DumpMemory();
   }
 
@@ -267,7 +271,6 @@ namespace crest{
 	 << ", bid " << bid
 	 << ", pred_val " << pred_val
 	 << ")\n";
-
 
     assert(stack_.size() == 1);
     stack_.pop_back();
@@ -350,6 +353,7 @@ namespace crest{
       if(i == stack_.size() - 1 && pred_) s = ", pred " + pred_->str();
 
       cout << i << " " << StackElem2str(stack_[i]) << s;
+	
       if((i == stack_.size() - 1) && fun_ret_val_) cout << " (RET VAL)";
       cout << "\n";
     }

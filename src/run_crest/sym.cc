@@ -2,9 +2,18 @@
 
 namespace crest{
   /*** SymExpr ***/
-  SymExpr::SymExpr(value_t c): const_{c}{ }
-  SymExpr::SymExpr(value_t c, var_t v): SymExpr{0} { coeff_[v] = c; }
-  SymExpr::SymExpr(const SymExpr &e): const_{e.const_}, coeff_{e.coeff_}{ }
+  SymExpr::SymExpr(value_t c){
+    const_ = c;
+    expr_str_ = std::to_string(c);
+  }
+  SymExpr::SymExpr(value_t c, var_t v):SymExpr{0}{
+    coeff_[v] = c;
+  }
+  SymExpr::SymExpr(const SymExpr &e){ 
+    const_ = e.const_;
+    coeff_ = e.coeff_;
+    expr_str_ = e.expr_str_;
+  }
   SymExpr::~SymExpr(){}
 
   void SymExpr::Serialize(string *s) const{
@@ -40,6 +49,8 @@ namespace crest{
   void SymExpr::Negate(){
       const_ = -const_;
       for(auto &c: coeff_) c.second = -c.second;
+
+      expr_str_ = "(- 0 " + expr_str_ + " )";
     }
 
   void SymExpr::AppendVars(std::set<var_t> *vars) const{
@@ -72,9 +83,9 @@ namespace crest{
       return ss.str();
     }
 
-
   const SymExpr &SymExpr::operator += (const SymExpr &e){
     const_ += e.const_;
+
     for(const auto &i: e.coeff_){
       auto j =coeff_.find(i.first);
       if(j == coeff_.end()) 
@@ -84,8 +95,11 @@ namespace crest{
 	if (i.second == 0) coeff_.erase(j);
       }
     }
+    
+    expr_str_ = "(+ " + expr_str_ + " " + e.expr_str_ + " )";
     return *this;
   }
+
   const SymExpr &SymExpr::operator -= (const SymExpr &e){
     const_ -= e.const_;
     for(const auto &i: e.coeff_){
@@ -97,23 +111,61 @@ namespace crest{
 	if (i.second == 0) coeff_.erase(j);
       }
     }
+
+    expr_str_ = "(- " + expr_str_ + " " + e.expr_str_ + " )";
+    return *this;
+  }
+
+  const SymExpr &SymExpr::operator *= (const SymExpr &e){
+    const_ *= e.const_;
+
+    for(const auto &i: e.coeff_){
+      auto j = coeff_.find(i.first);
+      if(j == coeff_.end()) 
+	coeff_[i.first] = 1;
+    }
+
+    expr_str_ = "(* " + expr_str_ + " " + e.expr_str_ + " )";
+    return *this;
+  }
+
+  const SymExpr &SymExpr::operator /= (const SymExpr &e){
     return *this;
   }
 
   const SymExpr &SymExpr::operator += (const value_t &c){
     const_ += c; 
+    expr_str_ = "(+ " + expr_str_ + " " + std::to_string(c) + " )";
     return *this;
   }
+
   const SymExpr &SymExpr::operator -= (const value_t &c){
     const_ -= c; 
+    expr_str_ = "(- " + expr_str_ + " " + std::to_string(c) + " )";
     return *this;
   }
+
   const SymExpr &SymExpr::operator *= (const value_t &c){
-    if (c == 0){coeff_.clear(); const_=0;}
+    if (c == 0){coeff_.clear(); const_=0; expr_str_ = "";}
     else{
       for(auto &co: coeff_) co.second *= c;
-      const_ *= c;
+      const_ *= c;  //tvn:  z3crest doesn't have this ??
+      
+      expr_str_ = "(* " + expr_str_ + " " + std::to_string(c) + " )";
     }
+
+    return *this;
+  }
+
+  const SymExpr &SymExpr::operator /= (const value_t &c){
+    assert(c!=0);
+    expr_str_ = "(div " + expr_str_ + " " + std::to_string(c) + " )";
+    return *this;
+  }
+
+  const SymExpr &SymExpr::operator %= (const value_t &c){
+    assert(c!=0);
+    expr_str_ = "(mod " + expr_str_ + " " + std::to_string(c) + " )";
     return *this;
   }
 

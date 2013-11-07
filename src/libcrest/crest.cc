@@ -9,7 +9,7 @@ static int pre_sym;
 
 static const int kOpTable[]={
   // binary arithmetic
-  c_ops::ADD, c_ops::SUBTRACT, c_ops::MULTIPLY, c_ops::CONCRETE, c_ops::CONCRETE,
+  c_ops::ADD, c_ops::SUBTRACT, c_ops::MULTIPLY, c_ops::DIVIDE, c_ops::CONCRETE,
   // binary bitwise operators
   c_ops::CONCRETE, c_ops::CONCRETE, c_ops::CONCRETE, c_ops::SHIFT_L, c_ops::CONCRETE,
   // binary logical operators
@@ -85,8 +85,8 @@ void __CrestApply1(__CREST_ID id, __CREST_OP op , __CREST_VAL val){
 
 
 void __CrestApply2(__CREST_ID id, __CREST_OP op , __CREST_VAL val){
-  cout << "myval" << val << endl;
   cout << __func__ << endl;  
+
   assert(__CREST_ADD <= op && op <= __CREST_CONCRETE);
   if (pre_sym) return;
 

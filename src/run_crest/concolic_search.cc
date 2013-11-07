@@ -2,7 +2,7 @@
 #include <sstream>
 #include <algorithm>
 #include "concolic_search.h"
-#include "yices_solver.h"
+#include "smt_solver.h"
 
 
 
@@ -226,7 +226,7 @@ namespace crest{
     cout << ", after neg " << *constraints[branch_idx] << endl;
 
     std::map<var_t,value_t>sol;
-    auto success = YicesSolver::IncrementalSolve(ex.inputs(), ex.vars(),cs, &sol);
+    auto success = SMTSolver::IncrementalSolve(ex.inputs(), ex.vars(),cs, &sol);
     constraints[branch_idx]->Negate();
     
     if (success){
@@ -244,10 +244,14 @@ namespace crest{
     return false;
   }
 
-
   bool Search::
   CheckPrediction(const SymExec &old_exec, const SymExec &new_exec, 
 		  const size_t &branch_idx){
+    cout << __func__ << endl;
+    cout << "branch idx " << branch_idx << endl;;
+    cout << "old ex " << old_exec
+	 << "\nnew ex " << new_exec << endl;
+
     if ((old_exec.path().branches().size() <= branch_idx) || 
 	(new_exec.path().branches().size() <= branch_idx)){
       return false;

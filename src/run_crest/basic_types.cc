@@ -7,7 +7,7 @@ namespace crest{
     return static_cast<compare_op_t>(op ^ 1);
   }
 
-  const char* op_str[] = {"==", "!=", ">" , "<=", "<", ">="};
+  const string op_str[] = {"==", "!=", ">" , "<=", "<", ">="};
   // std::map<const compare_op_t, const string> op_str = 
   //   {{compare_op_t::EQ,  "=="}, 
   //    {compare_op_t::NEQ, "!="},

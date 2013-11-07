@@ -50,7 +50,6 @@ namespace crest{
     bool fun_ret_val_;
     unsigned int n_inputs_;
 
-
     //helper
     void PushConcrete(value_t);
     void PushSymbolic(SymExpr *, value_t);

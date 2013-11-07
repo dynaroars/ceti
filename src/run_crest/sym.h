@@ -24,8 +24,9 @@ namespace crest{
 
     bool IsConcrete() const {return coeff_.empty();}
 
-    value_t const_term() const {return const_;}
+    const value_t const_term() const {return const_;}
     const std::map<var_t,value_t>& terms() const {return coeff_;}
+    const string expr_str() const {return expr_str_;}
 
     friend std::ostream& operator<< (std::ostream &os, const SymExpr &e){
       os << e.str();
@@ -36,9 +37,14 @@ namespace crest{
 
     const SymExpr &operator += (const SymExpr &);
     const SymExpr &operator -= (const SymExpr &);
+    const SymExpr &operator *= (const SymExpr &);
+    const SymExpr &operator /= (const SymExpr &);
+
     const SymExpr &operator += (const value_t &);
     const SymExpr &operator -= (const value_t &);
     const SymExpr &operator *= (const value_t &);
+    const SymExpr &operator /= (const value_t &);
+    const SymExpr &operator %= (const value_t &);
 
     bool operator==(const SymExpr &o) const{
       return const_ == o.const_ && coeff_ == o.coeff_;
@@ -47,6 +53,7 @@ namespace crest{
   private:
     value_t const_;
     std::map<var_t, value_t> coeff_;
+    string expr_str_;
   };
 
   class SymPred{
@@ -73,7 +80,10 @@ namespace crest{
       return os;
     }
 
-    const string str() const{ return expr_->str() + " " + op_str[op_] + " 0"; }
+    const string str() const{return expr_->str() + " " + op_str[op_] + " 0"; }
+    const string expr_str() const {
+      return "(" + op_str[op_] + " " + expr_->str() + " 0)";
+    }
 
     bool operator==(const SymPred &o) const{
       return (op_ == o.op_) && (*expr_ == *o.expr_);
