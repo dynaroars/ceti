@@ -185,6 +185,7 @@ namespace crest{
       cout << ">> " << res << endl;
       if (res.find(goal) != string::npos){
 	found_goal = true;
+	cout << "inputs " << container2str(inputs) << endl;
 	break;
       }
     }
@@ -196,6 +197,8 @@ namespace crest{
     std::ifstream in("szd_execution", std::ios::in | std::ios::binary);
     assert(in && ex->Parse(in));
     in.close();
+
+    cout << "Parsed info:\n"  << *ex << endl;
     return false;
   }
 
@@ -222,8 +225,11 @@ namespace crest{
       cs(constraints.begin(),constraints.begin()+branch_idx+1);
 	 
     cout << "constraint " << *constraints[branch_idx];
+    cout << ", z3 " << constraints[branch_idx]->expr_str();
     constraints[branch_idx]->Negate();
-    cout << ", after neg " << *constraints[branch_idx] << endl;
+    cout << ", after neg " << *constraints[branch_idx] ;
+    cout << ", z3 " << constraints[branch_idx]->expr_str();
+    cout << endl;
 
     std::map<var_t,value_t>sol;
     auto success = SMTSolver::IncrementalSolve(ex.inputs(), ex.vars(),cs, &sol);

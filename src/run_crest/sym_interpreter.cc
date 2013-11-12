@@ -17,8 +17,8 @@ namespace crest{
 
   void SymInterpreter::ClearStack(id_t id_unused){
     cout << __func__ 
-	 << "(id " << id_unused
-	 << ")\n";
+    	 << "(id " << id_unused
+    	 << ")\n";
 
 
     for(const auto &s: stack_) delete s.expr;
@@ -29,10 +29,10 @@ namespace crest{
 
   void SymInterpreter::Load(id_t id, addr_t addr, value_t val){
     cout << __func__ 
-	 << "(id " << id 
-	 << ", addr " << addr 
-	 << ", val " << val 
-	 << ")\n";
+    	 << "(id " << id 
+    	 << ", addr " << addr 
+    	 << ", val " << val 
+    	 << ")\n";
 
     const auto &it = mem_.find(addr);
     if(it == mem_.end()) PushConcrete(val);
@@ -44,9 +44,9 @@ namespace crest{
   
   void SymInterpreter::Store(id_t id, addr_t addr){
     cout << __func__ 
-	 << "(id " << id 
-	 << ", addr " << addr 
-	 << ")\n";
+    	 << "(id " << id 
+    	 << ", addr " << addr 
+    	 << ")\n";
 
     assert(stack_.size()>0);
     
@@ -71,10 +71,10 @@ namespace crest{
 
   void SymInterpreter::ApplyUnaryOp(id_t id , unary_op_t op, value_t val){
     cout << __func__ 
-	 << "(id " << id 
-	 << ", op " << op 
-	 << ", val " << val
-	 << ")\n";
+    	 << "(id " << id 
+    	 << ", op " << op 
+    	 << ", val " << val
+    	 << ")\n";
 
     assert(stack_.size() >= 1);
     auto &a = stack_.back();
@@ -99,10 +99,10 @@ namespace crest{
   void SymInterpreter::ApplyBinaryOp(id_t id , binary_op_t op, value_t val){
 
     cout << __func__ 
-	 << "(id " << id 
-	 << ", op " << op 
-	 << ", val " << val
-	 << ")\n";
+    	 << "(id " << id 
+    	 << ", op " << op 
+    	 << ", val " << val
+    	 << ")\n";
 
     assert(stack_.size() >= 2);
     auto &b = stack_.back(); stack_.pop_back();
@@ -112,8 +112,8 @@ namespace crest{
     cout << StackElem2str(b) << endl;
 
     if (a.expr || b.expr){
-      switch(op){
-      case c_ops::ADD:
+     
+      if (op == c_ops::ADD){
 	cout << "ADD" << endl;
 	if (a.expr == nullptr){
 	  std::swap(a,b);
@@ -124,64 +124,71 @@ namespace crest{
 	  *a.expr += *b.expr;
 	  delete b.expr;
 	}
-	break;
-      
-      case c_ops::SUBTRACT:  /*tvn check*/
+      }
+      else if (op == c_ops::SUBTRACT){
 	cout << "SUBTRACT" << endl;
 	if(a.expr == nullptr){
-	  b.expr->Negate(); /*tvn ???*/
+	  cout << "*** changed **** changed ***\n" << endl;
 	  std::swap(a,b);
-	  *a.expr += b.concrete;
+	  *a.expr -= b.concrete;
 	}else if (b.expr == nullptr){
 	  *a.expr -= b.concrete;
 	}else {
 	  *a.expr -= *b.expr;
 	  delete b.expr;
 	}
-	break;
-
-      case c_ops::MULTIPLY:
+      }
+      else if (op == c_ops::MULTIPLY){
 	cout << "MULTIPLY" << endl;
-
 	if (a.expr == nullptr){
 	  std::swap(a,b);
 	  *a.expr *= b.concrete;
 	}else if (b.expr == nullptr){
 	  *a.expr *= b.concrete;
-	}else {
-	  std::swap(a,b); /*tvn why*/
-	  *a.expr *= b.concrete;
+	}else{
+	  std::swap(a,b);
+	  *a.expr *= *b.expr;
 	  delete b.expr;
 	}
-	break;
+      }
+      //tvn: todo: if int then do int division, otherwise normal div
+      else if (op == c_ops::DIVIDE){
+	cout << "DIVIDE" << endl;
+	if (a.expr == nullptr){
+	  std::swap(a,b);
+	  *a.expr /= b.concrete;
+	}else if (b.expr == nullptr){
+	  *a.expr /= b.concrete;
+	}else{
+	  cout << "unsupported \n";
+	  *a.expr /= b.concrete;
+	  delete b.expr;
+	}
+      }
+      else if (op == c_ops::MOD){
+      	cout << "MODULUS" << endl;
+      	if (a.expr == nullptr){
+      	  std::swap(a,b);
+      	  *a.expr %= b.concrete;
+      	}else if (b.expr == nullptr){
+      	  *a.expr %= b.concrete;
+      	}else{
+      	  cout << "unsupported ";
+	  *a.expr %= b.concrete;
+      	  delete b.expr;
+      	}
+      }
 
-      case c_ops::SHIFT_L: /*tvn why*/
+      else if (op == c_ops::SHIFT_L){
 	cout << "SHIFT_L" << endl;
 
 	if(a.expr != nullptr){
 	  *a.expr *= (1 << b.concrete);
 	}
 	delete b.expr;
-	break;
-
-      // case c_ops::DIVIDE:
-      // 	cout << "DIVIDE" << endl;
-
-      // 	if (a.expr == nullptr){
-      // 	  cout << "gh0" << endl;
-      // 	  // std::swap(a,b);
-      // 	  // *a.expr /= b.concrete;
-      // 	  // break;
-      // 	}else if (b.expr == nullptr){
-      // 	  *a.expr /= b.concrete;
-      // 	  break;
-      // 	}else {
-      // 	  cout << "gh2" << endl;
-      // 	}
-	
-
-      default:
-	cout <<"UNSUPPORTED" << endl;
+      }
+      else{
+	cout <<"UNSUPPORTED op" << endl;
 	delete a.expr; a.expr = nullptr;
 	delete b.expr; //b.expr = nullptr;
       }
@@ -195,10 +202,10 @@ namespace crest{
 
   void SymInterpreter::ApplyCompareOp(id_t id , compare_op_t op, value_t val){
     cout << __func__ 
-	 << "(id " << id 
-	 << ", op " << op 
-	 << ", val " << val
-	 << ")\n";
+    	 << "(id " << id 
+    	 << ", op " << op 
+    	 << ", val " << val
+    	 << ")\n";
 
     assert(stack_.size() >= 2);
     auto &b = stack_.back(); stack_.pop_back();
@@ -209,12 +216,15 @@ namespace crest{
 
     if(a.expr || b.expr){
       if(a.expr == nullptr){
+	cout << "c1" << endl;
 	b.expr->Negate();
 	std::swap(a,b);
 	*a.expr += b.concrete;
       }else if(b.expr == nullptr){
+	cout << "c2" << endl;
 	*a.expr -= b.concrete;
       }else{
+	cout << "c3" << endl;
 	*a.expr -= *b.expr;
 	delete b.expr;
       }
@@ -235,7 +245,7 @@ namespace crest{
 
   void SymInterpreter::Call(id_t id_unused, func_id_t fid_unused){
     cout << __func__ 
-	 << "(id " << id_unused << ", fid " << fid_unused << ")" << endl;
+    	 << "(id " << id_unused << ", fid " << fid_unused << ")" << endl;
 
     ex_.mutable_path()->Push(kCallId);
 
@@ -267,10 +277,10 @@ namespace crest{
 
   void SymInterpreter::Branch(id_t id, branch_id_t bid, bool pred_val){
     cout << __func__ 
-	 << "(id " << id 
-	 << ", bid " << bid
-	 << ", pred_val " << pred_val
-	 << ")\n";
+    	 << "(id " << id 
+    	 << ", bid " << bid
+    	 << ", pred_val " << pred_val
+    	 << ")\n";
 
     assert(stack_.size() == 1);
     stack_.pop_back();
@@ -282,12 +292,12 @@ namespace crest{
 
   value_t SymInterpreter::NewInput(type_t type, addr_t addr){
     cout << __func__ 
-	 << "(type " << type
-	 << ", addr " << addr
-	 << ")\n";
+    	 << "(type " << type
+    	 << ", addr " << addr
+    	 << ")\n";
 
     cout << "mem size " << mem_.size() << ", n_inputs " << n_inputs_ << endl;
-    mem_[addr] = new SymExpr(1, n_inputs_);
+    mem_[addr] = new SymExpr(n_inputs_);
     cout << *mem_[addr] << endl;
 
     ex_.mutable_vars()->insert(std::make_pair(n_inputs_, type));
@@ -302,7 +312,7 @@ namespace crest{
       ex_.mutable_inputs()->push_back(ret);
     }
     n_inputs_++;
-    cout <<"ret " << ret << endl;
+    cout << "ret " << ret << endl;
     return ret;
   }
 
@@ -313,7 +323,7 @@ namespace crest{
   
   void SymInterpreter::PushSymbolic(SymExpr *expr, value_t val){
     string s;
-    if (expr) s = expr->str();
+    if (expr) s = expr->expr_str();
     else s = "null";
     cout << __func__ << "(expr " << s << ", val " << val << ")" << endl;
     
@@ -332,7 +342,7 @@ namespace crest{
   void SymInterpreter::DumpMemory(){
     cout << __func__ << endl;
     cout << "fun_ret_val " << fun_ret_val_
-	 << ", n_inputs" << n_inputs_;
+  	 << ", n_inputs" << n_inputs_;
 
     cout << ", pred " ;
     if (pred_)
@@ -345,12 +355,12 @@ namespace crest{
     cout << "mem \n" ;
     for(const auto &m: mem_)
       cout << m.first << ": " << *m.second << 
-	" [" << *(int *)m.first << "]" << endl;
+  	" [" << *(int *)m.first << "]" << endl;
 
     cout<< "stack \n";
     for (size_t i= 0 ; i < stack_.size(); ++i){
       string s = "";
-      if(i == stack_.size() - 1 && pred_) s = ", pred " + pred_->str();
+      if(i == stack_.size() - 1 && pred_) s = ", pred " + pred_->expr_str();
 
       cout << i << " " << StackElem2str(stack_[i]) << s;
 	

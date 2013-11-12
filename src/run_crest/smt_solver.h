@@ -16,7 +16,7 @@ namespace crest{
 
     static bool 
       SolveZ3(const std::map<var_t, type_t> &s,
-	      const vector<const SymPred *> &,
+	      const vector<string> &,
 	      std::map<var_t,value_t> *);
 
     static const string z3_version();

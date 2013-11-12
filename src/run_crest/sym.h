@@ -11,8 +11,8 @@ namespace crest{
 
   class SymExpr{
   public:
-    explicit SymExpr(value_t);
-    SymExpr(value_t, var_t);
+    SymExpr();
+    SymExpr(var_t);
     SymExpr(const SymExpr &);
     ~SymExpr();
 
@@ -22,18 +22,17 @@ namespace crest{
     void AppendVars(std::set<var_t> *) const;
     bool DependsOn(const std::map<var_t, type_t> &) const;
 
-    bool IsConcrete() const {return coeff_.empty();}
+    bool IsConcrete() const {return myvars_.empty();}
 
-    const value_t const_term() const {return const_;}
-    const std::map<var_t,value_t>& terms() const {return coeff_;}
-    const string expr_str() const {return expr_str_;}
+    const vector<var_t> & myvars() const{return myvars_;}
 
     friend std::ostream& operator<< (std::ostream &os, const SymExpr &e){
-      os << e.str();
+      os << e.expr_str();
       return os;
     }
 
-    const string str() const;
+    const string expr_str() const;
+    const string constr_str() const;
 
     const SymExpr &operator += (const SymExpr &);
     const SymExpr &operator -= (const SymExpr &);
@@ -47,13 +46,14 @@ namespace crest{
     const SymExpr &operator %= (const value_t &);
 
     bool operator==(const SymExpr &o) const{
-      return const_ == o.const_ && coeff_ == o.coeff_;
+      return myvars_ == o.myvars_ && expr_str_ == expr_str_;
     }
 
   private:
-    value_t const_;
-    std::map<var_t, value_t> coeff_;
+    vector<var_t>myvars_;
     string expr_str_;
+    string constr_str_ ;
+    
   };
 
   class SymPred{
@@ -76,14 +76,11 @@ namespace crest{
     compare_op_t op() const {return op_;}
     const SymExpr &expr() const {return *expr_;}
     friend std::ostream& operator<< (std::ostream &os, const SymPred &p){
-      os << p.str();
+      os << p.expr_str();
       return os;
     }
 
-    const string str() const{return expr_->str() + " " + op_str[op_] + " 0"; }
-    const string expr_str() const {
-      return "(" + op_str[op_] + " " + expr_->str() + " 0)";
-    }
+    const string expr_str() const;
 
     bool operator==(const SymPred &o) const{
       return (op_ == o.op_) && (*expr_ == *o.expr_);

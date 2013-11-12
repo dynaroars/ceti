@@ -9,7 +9,7 @@ static int pre_sym;
 
 static const int kOpTable[]={
   // binary arithmetic
-  c_ops::ADD, c_ops::SUBTRACT, c_ops::MULTIPLY, c_ops::DIVIDE, c_ops::CONCRETE,
+  c_ops::ADD, c_ops::SUBTRACT, c_ops::MULTIPLY, c_ops::DIVIDE, c_ops::MOD,
   // binary bitwise operators
   c_ops::CONCRETE, c_ops::CONCRETE, c_ops::CONCRETE, c_ops::SHIFT_L, c_ops::CONCRETE,
   // binary logical operators
@@ -28,7 +28,7 @@ void __CrestAtExit(){
 
   //write exec out to 'szd_execution'
   const auto &ex = SI->ex();
-  cout << ex << endl;
+  //cout << ex << endl;
 
   string buff;
   buff.reserve(1<<26);
@@ -40,7 +40,7 @@ void __CrestAtExit(){
 }
 
 void __CrestInit(){
-  cout << __func__ << endl;
+  //cout << __func__ << endl;
   srand((unsigned) time(NULL));
 
   //Read input
@@ -95,7 +95,6 @@ void __CrestApply2(__CREST_ID id, __CREST_OP op , __CREST_VAL val){
   else
     SI->ApplyCompareOp(id, static_cast<compare_op_t>(kOpTable[op]), val);
 }
-
 
 
 void __CrestHandleReturn(__CREST_ID id, __CREST_VAL val){

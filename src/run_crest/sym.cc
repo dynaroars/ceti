@@ -2,189 +2,158 @@
 
 namespace crest{
   /*** SymExpr ***/
-  SymExpr::SymExpr(value_t c){
-    const_ = c;
-    expr_str_ = std::to_string(c);
+  SymExpr::SymExpr(){}
+  SymExpr::SymExpr(var_t v){
+
+    if (std::find(myvars().cbegin(), myvars().cend(), v) == myvars().end()){
+      myvars_.push_back(v);
+    }
+
+    expr_str_ = "x" + std::to_string(v);
+    constr_str_ = "";
   }
-  SymExpr::SymExpr(value_t c, var_t v):SymExpr{0}{
-    coeff_[v] = c;
-  }
+  
   SymExpr::SymExpr(const SymExpr &e){ 
-    const_ = e.const_;
-    coeff_ = e.coeff_;
+    myvars_ = e.myvars_;
     expr_str_ = e.expr_str_;
+    constr_str_ = e.constr_str_;
   }
   SymExpr::~SymExpr(){}
 
   void SymExpr::Serialize(string *s) const{
-    assert(coeff_.size() < 128);
-    s->push_back(static_cast<char>(coeff_.size()));
-    s->append((char *) &const_, sizeof(value_t));
-    for (const auto &c: coeff_){
-      s->append((char *)&c.first, sizeof(var_t));
-      s->append((char *)&c.second, sizeof(value_t));
-    }
+    s->append(expr_str_ + "\n");
+    s->append(constr_str_ + "\n");
   }
   
   bool SymExpr::Parse(std::istream &s){
-    auto len = static_cast<size_t>(s.get());
-    s.read((char *)&const_, sizeof(value_t));
-    if (s.fail())
-      return false;
+    
+    std::getline(s, expr_str_);
 
-    coeff_.clear();
-    for(size_t i = 0; i < len; ++i){
-      var_t first;
-      value_t second;
-      s.read((char *) &first, sizeof(first));
-      s.read((char *) &second, sizeof(second));
-      coeff_[first] = second;
+    for (size_t i = 0; i < expr_str_.size() && expr_str_[i] != '\0'; i++) {
+      if (expr_str_[i] == 'x') {
+	int var;
+	sscanf(&expr_str_[i+1], "%d", &var);
+	if (var >= 0 && var < 128){/* valid variable range */
+	  myvars_.push_back(var);
+	}
+      }
     }
-    cout << __func__ << endl;
-    cout << "const " << const_ << endl;
-    cout << "coeff " << container2str(coeff_) << endl; 
+
+    std::getline(s, constr_str_);
+    for (size_t i = 0; i < constr_str_.size() && constr_str_[i] != '\0'; i++) {
+      if (constr_str_[i] == 'x') {
+	int var;
+	sscanf(&constr_str_[i+1], "%d", &var);
+	if (var >= 0 && var < 128){/* valid variable range */
+	  myvars_.push_back(var);
+	}
+      }
+    }
+
+    cout << __func__  << "\nexpr " << expr_str_ << endl;
+    cout << __func__  << "\nconstr " << constr_str_ << endl;
     return !s.fail();
   }
 
   void SymExpr::Negate(){
-      const_ = -const_;
-      for(auto &c: coeff_) c.second = -c.second;
-
-      expr_str_ = "(- 0 " + expr_str_ + " )";
+      expr_str_ = "(- 0 " + expr_str_ + ")";
     }
 
   void SymExpr::AppendVars(std::set<var_t> *vars) const{
-    for (const auto &c: coeff_) vars->insert(c.first);
+    for (const auto &v: myvars_) vars->insert(v);
   }
   
   bool SymExpr::DependsOn(const std::map<var_t, type_t> &vars) const{
-    for(const auto &c: coeff_){
-      if (vars.find(c.first) != vars.end()){
+    for(const auto &v: myvars_){
+      if (vars.find(v) != vars.end()){
 	return true;
       }
     }
     return false;
   }
 
-  const string SymExpr::str() const{
-      std::stringstream ss;
-      auto i = coeff_.size();
-      for (const auto &c: coeff_) {
-	if (c.second == 0) continue;
-	if (c.second != 1) ss << c.second << "*";
-	ss << "x" << c.first ;
-	if (--i > 0) ss << " + ";;
-      }
-      if (const_ != 0){
-	if (coeff_.size() > 0) ss << " + ";
-	ss << const_;
-      }
-
-      return ss.str();
-    }
-
+  const string SymExpr::expr_str() const{return expr_str_;}
+  const string SymExpr::constr_str() const{return constr_str_;}
+  
   const SymExpr &SymExpr::operator += (const SymExpr &e){
-    const_ += e.const_;
-
-    for(const auto &i: e.coeff_){
-      auto j =coeff_.find(i.first);
-      if(j == coeff_.end()) 
-	coeff_.insert(i);
-      else{
-	j->second += i.second;
-	if (i.second == 0) coeff_.erase(j);
-      }
-    }
-    
-    expr_str_ = "(+ " + expr_str_ + " " + e.expr_str_ + " )";
+    expr_str_ = "(+ " + expr_str_ + " " + e.expr_str_ + ")";
+    return *this;
+  }
+  const SymExpr &SymExpr::operator += (const value_t &c){
+    expr_str_ = "(+ " + expr_str_ + " " + std::to_string(c) + ")";
     return *this;
   }
 
   const SymExpr &SymExpr::operator -= (const SymExpr &e){
-    const_ -= e.const_;
-    for(const auto &i: e.coeff_){
-      auto j =coeff_.find(i.first);
-      if(j == coeff_.end()) 
-	coeff_[i.first] = -i.second; /*tvn:  ??*/
-      else{
-	j->second -= i.second;
-	if (i.second == 0) coeff_.erase(j);
-      }
-    }
-
-    expr_str_ = "(- " + expr_str_ + " " + e.expr_str_ + " )";
+    expr_str_ = "(- " + expr_str_ + " " + e.expr_str_ + ")";
+    return *this;
+  }
+  const SymExpr &SymExpr::operator -= (const value_t &c){
+    expr_str_ = "(- " + expr_str_ + " " + std::to_string(c) + ")";
     return *this;
   }
 
   const SymExpr &SymExpr::operator *= (const SymExpr &e){
-    const_ *= e.const_;
-
-    for(const auto &i: e.coeff_){
-      auto j = coeff_.find(i.first);
-      if(j == coeff_.end()) 
-	coeff_[i.first] = 1;
+    expr_str_ = "(* " + expr_str_ + " " + e.expr_str_ + ")";
+    return *this;
+  }
+  const SymExpr &SymExpr::operator *= (const value_t &c){
+    if (c == 0) {
+      myvars_.clear();
+      expr_str_ = "";
+      constr_str_ = "";
+    }
+    else{
+      expr_str_ = "(* " + expr_str_ + " " + std::to_string(c) + ")";
     }
 
-    expr_str_ = "(* " + expr_str_ + " " + e.expr_str_ + " )";
     return *this;
   }
 
   const SymExpr &SymExpr::operator /= (const SymExpr &e){
+    constr_str_ = "not(= e.expr_str_ 0)";
+    expr_str_ = "(div " + expr_str_ + " " + e.expr_str_ + " )";
     return *this;
   }
-
-  const SymExpr &SymExpr::operator += (const value_t &c){
-    const_ += c; 
-    expr_str_ = "(+ " + expr_str_ + " " + std::to_string(c) + " )";
-    return *this;
-  }
-
-  const SymExpr &SymExpr::operator -= (const value_t &c){
-    const_ -= c; 
-    expr_str_ = "(- " + expr_str_ + " " + std::to_string(c) + " )";
-    return *this;
-  }
-
-  const SymExpr &SymExpr::operator *= (const value_t &c){
-    if (c == 0){coeff_.clear(); const_=0; expr_str_ = "";}
-    else{
-      for(auto &co: coeff_) co.second *= c;
-      const_ *= c;  //tvn:  z3crest doesn't have this ??
-      
-      expr_str_ = "(* " + expr_str_ + " " + std::to_string(c) + " )";
-    }
-
-    return *this;
-  }
-
   const SymExpr &SymExpr::operator /= (const value_t &c){
     assert(c!=0);
-    expr_str_ = "(div " + expr_str_ + " " + std::to_string(c) + " )";
+    expr_str_ = "(div " + expr_str_ + " " + std::to_string(c) + ")";
     return *this;
   }
 
   const SymExpr &SymExpr::operator %= (const value_t &c){
+    /*The semantic of a%b in C is remainder, not mod, 
+    e.g., -7%10 = -7 instead of 3.  
+    so after obtaining the result z =x%y,  if z < 0, we add z to y */
+
     assert(c!=0);
-    expr_str_ = "(mod " + expr_str_ + " " + std::to_string(c) + " )";
+    expr_str_ = "(mod " + expr_str_ + " " + std::to_string(c) + ")";
     return *this;
   }
 
   
   /*** SymPred ***/
   SymPred::SymPred(compare_op_t op, SymExpr *e): op_(op), expr_(e){}
-  SymPred::SymPred():SymPred(c_ops::EQ, new SymExpr(0)){}
+  SymPred::SymPred():SymPred(c_ops::EQ, new SymExpr()){}
   SymPred::~SymPred(){delete expr_;}
 
   void SymPred::Serialize(std::string *s) const{
     s->push_back(static_cast<char>(op_));
     expr_->Serialize(s);
   }
+
   bool SymPred::Parse(std::istream &s){
     op_ = static_cast<compare_op_t>(s.get());
     cout << __func__  << "\nop " << op_ << endl;
     return (expr_->Parse(s) && !s.fail());
   }
 
+  const string SymPred::expr_str() const{
+    if (op_ == c_ops::NEQ)
+      return "(not (=  " + expr_->expr_str() + " 0))";
+    else 
+      return "(" + op_str[op_] + " " + expr_->expr_str() + " 0)";
+  }
 
   /*** SymPath ***/
   SymPath::SymPath(){}
@@ -214,6 +183,10 @@ namespace crest{
     s->append((char *)&branches_.front(), len * sizeof(branch_id_t));
 
     //write path constraints
+    cout << "writing path constraints " << constraints_.size() << endl;
+    // cout << cotainer2str(constraints_) << endl;
+    // cout << container2str(constraints_idx)) << endl;
+
     len = constraints_.size();
     s->append((char *)&len, sizeof(len));
     s->append((char *)&constraints_idx_.front(), len * sizeof(size_t));

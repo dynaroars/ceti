@@ -17,8 +17,9 @@ namespace crest{
     cout << __func__ << endl;
     cout << "old_sol " << container2str(old_sol) << endl;
     cout << "vars " << container2str(vars) << endl;
-    cout << "orig constraints " << endl;
-    cout << container2str(constraints) << endl;
+    cout << "orig constraints " << container2str(constraints) << endl;
+    cout << "z3 constraints " << z3strs(constraints) << endl;
+
     
     //build graph on variables, indicating a dependency when two variables co-occur 
     //in a symbolic predicate
@@ -63,10 +64,10 @@ namespace crest{
     cout << "dependent vars after BFS" << container2str(dependent_vars) << endl;
     
     //Generate list of dependent constraints
-    vector<const SymPred*> dependent_constraints;
+    vector<string> dependent_constraints;
     for (const auto &c: constraints){
       if (c->DependsOn(dependent_vars)){
-	dependent_constraints.push_back(c);
+	dependent_constraints.push_back(c->expr_str());
       }
     }
 
@@ -74,7 +75,6 @@ namespace crest{
     cout << container2str(dependent_constraints) << endl;
 
     //Run SMT solver
-
     sol->clear();
     auto result = SolveZ3(dependent_vars, dependent_constraints, sol);
 
@@ -95,90 +95,81 @@ namespace crest{
     }
 
     return false;
-
   }
   
 
   bool SMTSolver::SolveZ3(const std::map<var_t, type_t> &vars,
-			    const vector<const SymPred *> &constraints,
-			    std::map<var_t,value_t> *sol){
+			  const vector<string> &constraints,
+			  std::map<var_t,value_t> *sol){
+
     cout << __func__ << " Z3 " << z3_version() << endl;
     cout << "vars " << container2str(vars) << endl;
     cout << "constraints " << container2str(constraints) << endl;
+    cout << "z3 constraints " << container2str(constraints) << endl;
+
+
+    //"(benchmark tst :extrafuns ((x Int) (y Int)) :formula (> x y) :formula (> x 0))"
+
+    //make variables
+    string v_decls = ":extrafuns (";
+    for (const auto &v: vars){
+      v_decls = v_decls + "(x"+std::to_string(v.first)+ " " + "Int" + ") ";
+    }
+    v_decls = v_decls + ")";
+    cout << v_decls << endl;
+
+    //make constraints
+    string f_decls = "";
+    for (const auto &c: constraints){
+      f_decls = ":formula " + c + " ";
+    }
+    cout << f_decls << endl;
+
+    string smtlib_str = "(benchmark tst " + v_decls + f_decls + ")";
+    cout << "*** smtlib_str ***: " <<smtlib_str << endl;
+
 
     auto cfg = Z3_mk_config();
+    //Z3_set_param_value(cfg, "auto_config", "true");
     Z3_set_param_value(cfg, "MODEL", "true");
     auto ctx = Z3_mk_context(cfg);
     Z3_del_config(cfg);
-    auto int_ty = Z3_mk_int_sort(ctx);
 
-    //make variables
-    string v_name;
-    std::map<var_t, Z3_ast> z3_vars;
-    for (const auto &v: vars){
-      v_name = "x" + std::to_string(v.first) ;
-      auto v_ = 
-	Z3_mk_const(ctx, Z3_mk_string_symbol(ctx, v_name.c_str()), int_ty);
-      z3_vars[v.first]= v_ ; 
+    Z3_parse_smtlib_string(ctx,
+			   smtlib_str.c_str(),
+			   0,0,0,
+			   0,0,0);
+
+
+    unsigned n_formulas = Z3_get_smtlib_num_formulas(ctx);
+    for (unsigned i = 0; i < n_formulas; i++) {
+      Z3_ast f = Z3_get_smtlib_formula(ctx, i);
+      printf("formula %d: %s\n", i, Z3_ast_to_string(ctx, f));
+      Z3_assert_cnstr(ctx, f);
     }
 
-    for (const auto &e : z3_vars){
-      cout << "z3_vars[" << e.first << "] = " 
-	   << Z3_ast_to_string(ctx, e.second) << endl;
-    }
-
-    //make constraints
-    auto zero = Z3_mk_int(ctx, 0, int_ty);
-    vector<Z3_ast> terms;
-    for (const auto &c: constraints){
-      terms.clear();
-      terms.push_back(Z3_mk_int(ctx, c->expr().const_term(), int_ty));
-      for (auto t: c->expr().terms()){
-    	Z3_ast prod[] {z3_vars[t.first], Z3_mk_int(ctx, t.second, int_ty)};
-    	terms.push_back(Z3_mk_mul(ctx, 2, prod));
-      }
-      auto e = Z3_mk_add(ctx, terms.size(), &terms.front());
-
-      Z3_ast pred ;
-      switch(c->op()){
-      case c_ops::EQ : pred = Z3_mk_eq(ctx, e, zero); break;
-      case c_ops::NEQ: pred = Z3_mk_not(ctx, Z3_mk_eq(ctx, e, zero)); break;
-      case c_ops::GT:  pred = Z3_mk_gt(ctx, e, zero); break;
-      case c_ops::LE:  pred = Z3_mk_le(ctx, e, zero); break;
-      case c_ops::LT:  pred = Z3_mk_lt(ctx, e, zero); break;
-      case c_ops::GE:  pred = Z3_mk_ge(ctx, e, zero); break; 
-      default:
-    	cout << "unknown comparison op: \n" << c->op() << endl;
-    	exit(1);
-      }
-
-      cout << "constraint " << *c << ", "
-	   << Z3_ast_to_string(ctx,pred) << endl;
-      Z3_assert_cnstr(ctx, pred);
-    }
-
-    Z3_model model = 0;
+    Z3_model model =0;
     auto success = (Z3_check_and_get_model(ctx, &model) == Z3_L_TRUE);
     if (success == Z3_L_TRUE){
       
       cout << "model\n" << Z3_model_to_string(ctx, model) << endl;
       int n_consts = Z3_get_model_num_constants(ctx, model);
-      assert(n_consts == (int)vars.size());
+      //assert(n_consts == (int)vars.size());
 
       int idx; long val;
       sol->clear();      
       for (int i = 0; i < n_consts; ++i){
 	
-	auto cnst = Z3_get_model_constant(ctx, model, i);
-	auto name = Z3_get_decl_name(ctx, cnst);
-	auto a = Z3_mk_app(ctx, cnst, 0, 0);
-	auto v = a;
-	Z3_eval(ctx, model, a, &v);
+    	auto cnst = Z3_get_model_constant(ctx, model, i);
+    	auto name = Z3_get_decl_name(ctx, cnst);
+    	auto a = Z3_mk_app(ctx, cnst, 0, 0);
+    	auto v = a;
+    	Z3_eval(ctx, model, a, &v);
 
-	sscanf(Z3_get_symbol_string(ctx, name), "x%d", &idx);
-	val = std::strtol(Z3_get_numeral_string(ctx, v), NULL, 0);
+    	sscanf(Z3_get_symbol_string(ctx, name), "x%d", &idx);
+    	val = std::strtol(Z3_get_numeral_string(ctx, v), NULL, 0);
 	
-	sol->insert(make_pair(idx, val));
+    	sol->insert(make_pair(idx, val));
       }
       cout << "sol " << container2str(*sol) << endl;
     }
