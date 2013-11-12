@@ -148,6 +148,8 @@ namespace crest{
     return (expr_->Parse(s) && !s.fail());
   }
 
+  void SymPred::Negate(){op_ = NegateCompareOp(op_);}  
+
   const string SymPred::expr_str() const{
     if (op_ == c_ops::NEQ)
       return "(not (=  " + expr_->expr_str() + " 0))";

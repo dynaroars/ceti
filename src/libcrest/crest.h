@@ -13,11 +13,17 @@
 #define EXTERN extern
 #endif                                                                  
 
+struct __CREST_DT{
+  long long int i;
+  double d;
+  int is_int;
+};
 
 #define __CREST_ID int
 #define __CREST_BRANCH_ID int
 #define __CREST_FUNC_ID unsigned int
 #define __CREST_VAL long long int
+#define __CREST_VAL2 double
 #define __CREST_ADDR unsigned long int
 #define __CREST_OP int
 #define __CREST_BOOL unsigned char
@@ -66,9 +72,14 @@ enum {
 #define CREST_char(x) __CrestChar(&x)
 #define CREST_short(x) __CrestShort(&x)
 #define CREST_int(x) __CrestInt(&x)
+#define CREST_float(x) __CrestFloat(&x)
+#define CREST_double(x) __CrestDouble(&x)
+
 
 EXTERN void __CrestInit() __SKIP;
 EXTERN void __CrestLoad(__CREST_ID, __CREST_ADDR, __CREST_VAL) __SKIP;
+EXTERN void __CrestLoad2(__CREST_ID, __CREST_ADDR, __CREST_DT) __SKIP;
+
 EXTERN void __CrestStore(__CREST_ID, __CREST_ADDR) __SKIP;
 EXTERN void __CrestClearStack(__CREST_ID) __SKIP;
 EXTERN void __CrestApply1(__CREST_ID, __CREST_OP, __CREST_VAL) __SKIP;
@@ -85,6 +96,9 @@ EXTERN void __CrestUInt(unsigned int* x) __SKIP;
 EXTERN void __CrestChar(char* x) __SKIP;
 EXTERN void __CrestShort(short* x) __SKIP;
 EXTERN void __CrestInt(int * x) __SKIP;
+
+EXTERN void __CrestFloat(float *x) __SKIP;
+EXTERN void __CrestDouble(double *x) __SKIP;
 
 
 #endif

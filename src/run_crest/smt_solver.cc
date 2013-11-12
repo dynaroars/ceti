@@ -115,7 +115,10 @@ namespace crest{
     //make variables
     string v_decls = ":extrafuns (";
     for (const auto &v: vars){
-      v_decls = v_decls + "(x"+std::to_string(v.first)+" " + "Int" + ") ";
+      string vn = "x" + std::to_string(v.first);
+      cout << vn << ", type = " << v.second << endl;
+      string vt = "Int";
+      v_decls = v_decls + "("+ vn + " " + vt + ") ";
     }
     v_decls = v_decls + ")";
     cout << v_decls << endl;

@@ -30,10 +30,13 @@ namespace crest{
 
 
     void print_protected_members();
-    bool SolveAtBranch(const SymExec &, const size_t &, vector<value_t> *);
+    template<typename T>
+    bool SolveAtBranch(const SymExec &, const size_t &, vector<T> *);
     bool CheckPrediction(const SymExec &, const SymExec &, const size_t &);
 
-    bool RunProgram(const vector<value_t> &, SymExec *);
+    template<typename T>
+    bool RunProgram(const vector<T> &, SymExec *);
+
     bool UpdateCoverage(const SymExec &);
     bool UpdateCoverage(const SymExec &, std::set<branch_id_t> *);
 
@@ -44,7 +47,8 @@ namespace crest{
     const string goal = "GOAL";
 
     void WriteCoverageToFile();
-    void WriteInputToFile(const vector<value_t>&);
+    template<typename T> void WriteInputToFile(const vector<T>&);
+      
   };
 
   class BoundedDepthFirstSearch : public Search{

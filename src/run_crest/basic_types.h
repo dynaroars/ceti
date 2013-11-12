@@ -20,6 +20,25 @@ using std::cout;
 using std::endl;
 
 namespace crest{
+  class DT{
+  public:
+    DT();
+    DT(const DT &);
+    DT(long long int);
+    DT(double);
+    long long int i = 0;
+    double d = 0.0;
+    bool is_int = false;
+
+    friend std::ostream& operator<< (std::ostream &os, const DT &dt){
+      if (dt.is_int) os << dt.i << "i";
+      else os << dt.d << "d";
+      return os;
+    }
+
+
+  };
+
   typedef int branch_id_t;
   typedef long long int value_t;
   typedef unsigned int func_id_t;
@@ -56,15 +75,9 @@ namespace crest{
   using c_types::type_t;
 
   value_t CastTo(value_t val, type_t type);
+  //value_t2 CastTo(value_t2 val, type_t type);
 
   extern const string op_str[];
-  //extern std::map<const compare_op_t, const string> op_str;
-  /* extern const char* kMinValueStr []; */
-  /* extern const char* kMaxValueStr []; */
-
-  /* extern const value_t kMinValue []; */
-  /* extern const value_t kMaxValue []; */
-  /* extern const size_t kByteSize[]; */
 
 
   template<typename T>
@@ -79,20 +92,6 @@ namespace crest{
     ss << "]";
     return ss.str();
   }
-
-  /* template<typename T1, typename T2> */
-  /*   constexpr string container2str(const T1 &ms){ */
-  /*   std::stringstream ss; */
-  /*   auto i = ms.size(); */
-  /*   ss << ms.size() << " [" ; */
-  /*   for(const T2 &m: ms){ */
-  /*     if (std::is_pointer<T2>::value) ss << *m; */
-  /*     else ss << m; */
-  /*     if (--i) ss << ", "; */
-  /*   } */
-  /*   ss << "]"; */
-  /*   return ss.str(); */
-  /* } */
 
   template<typename T>
     constexpr string container2str(const vector<T *> &ms){

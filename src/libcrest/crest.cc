@@ -64,6 +64,12 @@ void __CrestLoad(__CREST_ID id, __CREST_ADDR addr, __CREST_VAL val){
   if (!pre_sym) SI->Load(id, addr, val);
 }
 
+void __CrestLoad2(__CREST_ID id, __CREST_ADDR addr, __CREST_DT val){
+  cout << __func__ << endl;
+  //if (!pre_sym) SI->Load(id, addr, val);
+}
+
+
 void __CrestStore(__CREST_ID id, __CREST_ADDR addr){
   cout << __func__ << endl;
   if (!pre_sym) SI->Store(id, addr);
@@ -150,4 +156,18 @@ void __CrestShort(short* x) {
   cout << __func__ << endl;
   pre_sym = 0;
   *x = (short)SI->NewInput(c_types::SHORT, (addr_t)x);
+}
+
+
+void __CrestFloat(float* x) {
+  cout << __func__ << endl;
+  pre_sym = 0;
+  *x = (short)SI->NewInput(c_types::FLOAT, (addr_t)x);
+}
+
+
+void __CrestDouble(double* x) {
+  cout << __func__ << endl;
+  pre_sym = 0;
+  *x = (short)SI->NewInput(c_types::DOUBLE, (addr_t)x);
 }

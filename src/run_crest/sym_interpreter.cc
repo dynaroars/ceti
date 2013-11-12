@@ -41,6 +41,21 @@ namespace crest{
     DumpMemory();
   }
 
+
+  // void SymInterpreter::Load(id_t id, addr_t addr, value_t2 val){
+  //   cout << __func__ 
+  //   	 << "(id " << id 
+  //   	 << ", addr " << addr 
+  //   	 << ", val " << val 
+  //   	 << ")\n";
+
+  //   const auto &it = mem_.find(addr);
+  //   if(it == mem_.end()) PushConcrete(val);
+  //   else PushSymbolic(new SymExpr(*it->second), val);
+
+  //   DumpMemory();
+  // }
+
   
   void SymInterpreter::Store(id_t id, addr_t addr){
     cout << __func__ 
@@ -320,6 +335,11 @@ namespace crest{
     cout << __func__ << "(val " << val << ")" << endl;
     PushSymbolic(nullptr, val);
   }
+
+  // void SymInterpreter::PushConcrete(DT val){
+  //   cout << __func__ << "(val " << val << ")" << endl;
+  //   PushSymbolic(nullptr, val);
+  // }
   
   void SymInterpreter::PushSymbolic(SymExpr *expr, value_t val){
     string s;
@@ -332,6 +352,20 @@ namespace crest{
     se.expr = expr;
     se.concrete = val;
   }
+
+
+  void SymInterpreter::PushSymbolic(SymExpr *expr, DT val){
+    string s;
+    if (expr) s = expr->expr_str();
+    else s = "null";
+    cout << __func__ << "(expr " << s << ", val " << val << ")" << endl;
+    
+    stack_.push_back(StackElem());
+    auto &se = stack_.back();
+    se.expr = expr;
+    se.dt_concrete = val;
+  }
+
 
   void SymInterpreter::ClearPredRegister(){
     cout << __func__ << endl;

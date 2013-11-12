@@ -65,7 +65,7 @@ namespace crest{
     void Serialize(std::string *) const;
     bool Parse(std::istream &);
 
-    void Negate(){op_ = NegateCompareOp(op_);}
+    void Negate();
 
     void AppendVars(std::set<var_t> *vars) const{expr_->AppendVars(vars);}
 

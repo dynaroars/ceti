@@ -152,7 +152,8 @@ namespace crest{
     write_file(file,ss.str());
   }
   
-  void Search::WriteInputToFile(const vector<value_t>&input){
+  template<typename T>
+  void Search::WriteInputToFile(const vector<T>&input){
     const auto file = "input";
     std::stringstream ss;
     for (const auto &inp: input) ss << inp << endl;
@@ -160,7 +161,8 @@ namespace crest{
     write_file(file,ss.str());
   }
   
-  bool Search::RunProgram(const vector<value_t> &inputs, SymExec *ex){
+  template<typename T>
+  bool Search::RunProgram(const vector<T> &inputs, SymExec *ex){
     if (++num_iters_ > max_iters_){
       cout << "max_iters " << max_iters_ << "reached. Exit !" << endl;
       exit(0);
@@ -202,9 +204,10 @@ namespace crest{
     return false;
   }
 
+  template<typename T>
   bool Search::
   SolveAtBranch(const SymExec &ex, const size_t &branch_idx, 
-		vector<value_t> *input){
+		vector<T> *input){
 
     cout << __func__ << endl;
     cout << ex << endl;
@@ -231,7 +234,7 @@ namespace crest{
     cout << ", z3 " << constraints[branch_idx]->expr_str();
     cout << endl;
 
-    std::map<var_t,value_t>sol;
+    std::map<var_t,T>sol;
     auto success = SMTSolver::IncrementalSolve(ex.inputs(), ex.vars(),cs, &sol);
     constraints[branch_idx]->Negate();
     
