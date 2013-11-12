@@ -75,6 +75,7 @@ namespace crest{
     cout << container2str(dependent_constraints) << endl;
 
     //Run SMT solver
+
     sol->clear();
     auto result = SolveZ3(dependent_vars, dependent_constraints, sol);
 
@@ -95,6 +96,7 @@ namespace crest{
     }
 
     return false;
+
   }
   
 
@@ -113,7 +115,7 @@ namespace crest{
     //make variables
     string v_decls = ":extrafuns (";
     for (const auto &v: vars){
-      v_decls = v_decls + "(x"+std::to_string(v.first)+ " " + "Int" + ") ";
+      v_decls = v_decls + "(x"+std::to_string(v.first)+" " + "Int" + ") ";
     }
     v_decls = v_decls + ")";
     cout << v_decls << endl;

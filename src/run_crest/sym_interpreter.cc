@@ -308,7 +308,7 @@ namespace crest{
     }
     else{
       auto max = 10000, min = -1000;
-      ret = CastTo(min+(rand() %(int)(max-min+1)),type);
+      ret = CastTo(min+(rand() %(int)(max-min+1)), type);
       ex_.mutable_inputs()->push_back(ret);
     }
     n_inputs_++;

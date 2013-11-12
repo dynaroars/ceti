@@ -24,7 +24,6 @@ namespace crest{
   typedef long long int value_t;
   typedef unsigned int func_id_t;
   typedef unsigned int var_t;
-  typedef long long int value_t;
   typedef unsigned long int addr_t;
 
   static const branch_id_t kCallId = -1;
@@ -49,7 +48,10 @@ namespace crest{
 		  U_SHORT = 2,      SHORT = 3,
 		  U_INT = 4,        INT = 5,
 		  U_LONG = 6,       LONG = 7,
-		  U_LONG_LONG = 8,  LONG_LONG = 9 };
+		  U_LONG_LONG = 8,  LONG_LONG = 9,
+
+		  FLOAT = 10,       DOUBLE = 11
+    };
   }
   using c_types::type_t;
 
@@ -57,12 +59,12 @@ namespace crest{
 
   extern const string op_str[];
   //extern std::map<const compare_op_t, const string> op_str;
-  extern const char* kMinValueStr [];
-  extern const char* kMaxValueStr [];
+  /* extern const char* kMinValueStr []; */
+  /* extern const char* kMaxValueStr []; */
 
-  extern const value_t kMinValue [];
-  extern const value_t kMaxValue [];
-  extern const size_t kByteSize[];
+  /* extern const value_t kMinValue []; */
+  /* extern const value_t kMaxValue []; */
+  /* extern const size_t kByteSize[]; */
 
 
   template<typename T>
