@@ -336,11 +336,6 @@ namespace crest{
     PushSymbolic(nullptr, val);
   }
 
-  // void SymInterpreter::PushConcrete(DT val){
-  //   cout << __func__ << "(val " << val << ")" << endl;
-  //   PushSymbolic(nullptr, val);
-  // }
-  
   void SymInterpreter::PushSymbolic(SymExpr *expr, value_t val){
     string s;
     if (expr) s = expr->expr_str();
@@ -352,20 +347,6 @@ namespace crest{
     se.expr = expr;
     se.concrete = val;
   }
-
-
-  void SymInterpreter::PushSymbolic(SymExpr *expr, DT val){
-    string s;
-    if (expr) s = expr->expr_str();
-    else s = "null";
-    cout << __func__ << "(expr " << s << ", val " << val << ")" << endl;
-    
-    stack_.push_back(StackElem());
-    auto &se = stack_.back();
-    se.expr = expr;
-    se.dt_concrete = val;
-  }
-
 
   void SymInterpreter::ClearPredRegister(){
     cout << __func__ << endl;

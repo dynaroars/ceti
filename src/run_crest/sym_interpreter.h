@@ -14,19 +14,12 @@ namespace crest{
 
     void ClearStack(id_t);    
     void Load(id_t, addr_t, value_t);
-    void Load(id_t, addr_t, DT);
-
     void Store(id_t, addr_t);
     
     void ApplyUnaryOp(id_t, unary_op_t, value_t);
     void ApplyBinaryOp(id_t, binary_op_t, value_t);
     void ApplyCompareOp(id_t, compare_op_t, value_t);
 
-    void ApplyUnaryOp(id_t, unary_op_t, DT);
-    void ApplyBinaryOp(id_t, binary_op_t, DT);
-    void ApplyCompareOp(id_t, compare_op_t, DT);
-
-    void HandleReturn(id_t, DT);
     void HandleReturn(id_t, value_t);
     void Call(id_t, func_id_t);
     void Return(id_t);
@@ -40,7 +33,6 @@ namespace crest{
     struct StackElem{
       SymExpr *expr; //nullptr to indicate concrete
       value_t concrete;
-      DT dt_concrete;
     };
 
     static string StackElem2str(const StackElem &se){
@@ -59,9 +51,6 @@ namespace crest{
     unsigned int n_inputs_;
 
     //helper
-    void PushConcrete(DT);
-    void PushSymbolic(SymExpr *, DT);
-
     void PushConcrete(value_t);
     void PushSymbolic(SymExpr *, value_t);
     void ClearPredRegister();

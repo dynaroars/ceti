@@ -20,25 +20,6 @@ using std::cout;
 using std::endl;
 
 namespace crest{
-  class DT{
-  public:
-    DT();
-    DT(const DT &);
-    DT(long long int);
-    DT(double);
-    long long int i = 0;
-    double d = 0.0;
-    bool is_int = false;
-
-    friend std::ostream& operator<< (std::ostream &os, const DT &dt){
-      if (dt.is_int) os << dt.i << "i";
-      else os << dt.d << "d";
-      return os;
-    }
-
-
-  };
-
   typedef int branch_id_t;
   typedef long long int value_t;
   typedef unsigned int func_id_t;
@@ -67,9 +48,7 @@ namespace crest{
 		  U_SHORT = 2,      SHORT = 3,
 		  U_INT = 4,        INT = 5,
 		  U_LONG = 6,       LONG = 7,
-		  U_LONG_LONG = 8,  LONG_LONG = 9,
-
-		  FLOAT = 10,       DOUBLE = 11
+		  U_LONG_LONG = 8,  LONG_LONG = 9
     };
   }
   using c_types::type_t;

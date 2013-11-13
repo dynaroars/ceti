@@ -3,15 +3,6 @@
 using std::numeric_limits;
 
 namespace crest{
-  DT::DT(){}
-  DT::DT(long long int iv):i(iv),is_int(true){}
-  DT::DT(double dv):d(dv), is_int(false){}
-  DT::DT(const DT &dt){
-    i = dt.i;
-    d = dt.d;
-    is_int = dt.is_int;
-  }
-
   compare_op_t NegateCompareOp(compare_op_t op){
     return static_cast<compare_op_t>(op ^ 1);
   }
@@ -47,9 +38,6 @@ namespace crest{
     case c_types::INT:      return static_cast<int>(val);
     case c_types::U_LONG:   return static_cast<unsigned long>(val);
     case c_types::LONG:     return static_cast<long>(val);
-
-    case c_types::FLOAT: return static_cast<float>(val);
-    case c_types::DOUBLE: return static_cast<double>(val);
 
       // Cast would do nothing in these cases.
     case c_types::U_LONG_LONG:
