@@ -9,11 +9,12 @@
 
 namespace crest{
 
+
   class SymExpr{
   public:
     SymExpr();
-    SymExpr(var_t);
-    SymExpr(const SymExpr &);
+    explicit SymExpr(var_t);
+    explicit SymExpr(const SymExpr &);
     ~SymExpr();
 
     void Serialize(std::string *) const;
@@ -38,7 +39,6 @@ namespace crest{
     const SymExpr &operator -= (const SymExpr &);
     const SymExpr &operator *= (const SymExpr &);
     const SymExpr &operator /= (const SymExpr &);
-
     const SymExpr &operator += (const value_t &);
     const SymExpr &operator -= (const value_t &);
     const SymExpr &operator *= (const value_t &);
@@ -53,13 +53,12 @@ namespace crest{
     vector<var_t>myvars_;
     string expr_str_;
     string constr_str_ ;
-    
   };
 
   class SymPred{
   public:
     SymPred();
-    SymPred(compare_op_t, SymExpr *);
+    explicit SymPred(compare_op_t, SymExpr *);
     ~SymPred();
 
     void Serialize(std::string *) const;

@@ -168,9 +168,9 @@ namespace crest{
       exit(0);
     }
     
-    cout << __func__ << " (" << num_iters_ << ", " 
+    cout << __func__ << " (iters " << num_iters_ << ", " 
 	 << max_iters_ << ")" << endl;
-    //printf("** RunProgram ** (%d/%d)\n",num_iters_, max_iters_);
+
     cout << "input " << container2str(inputs) << endl;;
 
     WriteInputToFile(inputs);
@@ -228,10 +228,8 @@ namespace crest{
       cs(constraints.begin(),constraints.begin()+branch_idx+1);
 	 
     cout << "constraint " << *constraints[branch_idx];
-    cout << ", z3 " << constraints[branch_idx]->expr_str();
     constraints[branch_idx]->Negate();
     cout << ", after neg " << *constraints[branch_idx] ;
-    cout << ", z3 " << constraints[branch_idx]->expr_str();
     cout << endl;
 
     std::map<var_t,T>sol;

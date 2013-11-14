@@ -18,8 +18,6 @@ namespace crest{
     cout << "old_sol " << container2str(old_sol) << endl;
     cout << "vars " << container2str(vars) << endl;
     cout << "orig constraints " << container2str(constraints) << endl;
-    cout << "z3 constraints " << z3strs(constraints) << endl;
-
     
     //build graph on variables, indicating a dependency when two variables co-occur 
     //in a symbolic predicate
@@ -107,8 +105,6 @@ namespace crest{
     cout << __func__ << " Z3 " << z3_version() << endl;
     cout << "vars " << container2str(vars) << endl;
     cout << "constraints " << container2str(constraints) << endl;
-    cout << "z3 constraints " << container2str(constraints) << endl;
-
 
     //"(benchmark tst :extrafuns ((x Int) (y Int)) :formula (> x y) :formula (> x 0))"
 
@@ -126,7 +122,7 @@ namespace crest{
     //make constraints
     string f_decls = "";
     for (const auto &c: constraints){
-      f_decls = ":formula " + c + " ";
+      f_decls = f_decls + ":formula " + c + " ";
     }
     cout << f_decls << endl;
 

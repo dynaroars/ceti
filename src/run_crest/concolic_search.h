@@ -7,7 +7,7 @@
 namespace crest{
   class Search{
   public:
-    Search(const string &, const int &);
+    explicit Search(const string &, const int &);
     virtual ~Search();
     virtual bool run() = 0;
 

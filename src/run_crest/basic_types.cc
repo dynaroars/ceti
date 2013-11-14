@@ -28,27 +28,27 @@ namespace crest{
   //   return op_neg[op];
   // }
 
-  value_t CastTo(value_t val, type_t type) {
-    switch (type) {
-    case c_types::U_CHAR:   return static_cast<unsigned char>(val);
-    case c_types::CHAR:     return static_cast<char>(val);
-    case c_types::U_SHORT:  return static_cast<unsigned short>(val);
-    case c_types::SHORT:    return static_cast<short>(val);
-    case c_types::U_INT:    return static_cast<unsigned int>(val);
-    case c_types::INT:      return static_cast<int>(val);
-    case c_types::U_LONG:   return static_cast<unsigned long>(val);
-    case c_types::LONG:     return static_cast<long>(val);
+  // value_t CastTo(value_t val, type_t type) {
+  //   switch (type) {
+  //   case c_types::U_CHAR:   return static_cast<unsigned char>(val);
+  //   case c_types::CHAR:     return static_cast<char>(val);
+  //   case c_types::U_SHORT:  return static_cast<unsigned short>(val);
+  //   case c_types::SHORT:    return static_cast<short>(val);
+  //   case c_types::U_INT:    return static_cast<unsigned int>(val);
+  //   case c_types::INT:      return static_cast<int>(val);
+  //   case c_types::U_LONG:   return static_cast<unsigned long>(val);
+  //   case c_types::LONG:     return static_cast<long>(val);
 
-      // Cast would do nothing in these cases.
-    case c_types::U_LONG_LONG:
-    case c_types::LONG_LONG:
-      return val;
-    }
+  //     // Cast would do nothing in these cases.
+  //   case c_types::U_LONG_LONG:
+  //   case c_types::LONG_LONG:
+  //     return val;
+  //   }
 
-    // Cannot reach here.                
-    assert(false);
-    return 0;
-  }
+  //   // Cannot reach here.                
+  //   assert(false);
+  //   return 0;
+  // }
 
 
 }//namespace crest

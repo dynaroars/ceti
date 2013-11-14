@@ -186,8 +186,8 @@ namespace crest{
 
     //write path constraints
     cout << "writing path constraints " << constraints_.size() << endl;
-    // cout << cotainer2str(constraints_) << endl;
-    // cout << container2str(constraints_idx)) << endl;
+    cout << container2str(constraints_) << endl;
+    //cout << container2str(constraints_idx)) << endl;
 
     len = constraints_.size();
     s->append((char *)&len, sizeof(len));

@@ -53,7 +53,7 @@ namespace crest{
   }
   using c_types::type_t;
 
-  value_t CastTo(value_t val, type_t type);
+  //value_t CastTo(value_t val, type_t type);
   //value_t2 CastTo(value_t2 val, type_t type);
 
   extern const string op_str[];
