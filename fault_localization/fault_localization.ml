@@ -237,24 +237,6 @@ let main (): unit =
 
   if !do_instrument then instrument !filename 
   else fault_loc !filename; 
-
-
-  (*compile the instrumented program*)
-
-  (*Run testcases*)
-  (*remove path*)
-
-  (*Exec the good test script*)
-  (*rename .path to .gpath *)
-  (*Obtain coverage info for test good*)
-
-
-  (*Exec the bad test script*)
-  (*rename .path to bpaath*)
-
-  (*Obtain coverage info for bad good*)
-
-
   ()
 
 
