@@ -33,9 +33,10 @@ let uk_max = 1
 
 let boolTyp:typ = intType
 
-let mk_call fname ?(ftype=TVoid []) ?(lv=None) args  : instr = 
-  let f:lval = var(makeVarinfo true fname ftype) in
-  Call(lv, Lval f, args, !currentLoc)
+let mk_lv ?(ftype=TVoid []) fname: lval = var(makeVarinfo true fname ftype)
+
+let mk_call ?(ftype=TVoid []) ?(lv=None) fname args  : instr = 
+  Call(lv, Lval (mk_lv ~ftype:ftype fname), args, !currentLoc)
   
 
 
@@ -73,15 +74,21 @@ let mk_uks_main (fd:fundec) (n_uks:int) (myQ_typ:typ) (tcs:(int list * int) list
       mk_call "klee_make_symbolic" [addrof_uk; sizeof_uk; const_str] in
 
     
-    (* make klee_assume(min <= uk) , klee_assume(uk <= max)*)
-    let e_lb = BinOp(Le,integer uk_min,Lval lv, boolTyp) in
-    let e_ub = BinOp(Le,Lval lv, integer uk_max, boolTyp) in
+    (* make klee_assume(min <= uk) , klee_assume(uk <= max) for uk1 ...n*)
+    let instrs = if uid = 0 then
+	[mk_sym_instr]
+      else (
+	let e_lb = BinOp(Le,integer uk_min,Lval lv, boolTyp) in
+	let e_ub = BinOp(Le,Lval lv, integer uk_max, boolTyp) in
+	
+	let klee_assert_lb:instr = mk_call "klee_assume" [e_lb] in 
+	let klee_assert_ub:instr = mk_call "klee_assume" [e_ub] in 
+	[mk_sym_instr; klee_assert_lb; klee_assert_ub]
+      )
+    in
+    (vi,lv), instrs
 
-    let klee_assert_lb:instr = mk_call "klee_assume" [e_lb] in 
-    let klee_assert_ub:instr = mk_call "klee_assume" [e_ub] in 
 
-
-    (vi,lv), [mk_sym_instr; klee_assert_lb; klee_assert_ub]
   in
 
   let uks, instrs = L.split(L.map mk_uk (range n_uks)) in 
@@ -93,7 +100,7 @@ let mk_uks_main (fd:fundec) (n_uks:int) (myQ_typ:typ) (tcs:(int list * int) list
     (* mk  tmp = myQ(inp, uks) *)
     let v:lval = var(makeTempVar fd myQ_typ) in 
     let inp_args = (L.map integer inps)@(L.map (fun lv -> Lval lv) uks_lv) in 
-    let i:instr = mk_call "myQ" ~ftype:myQ_typ ~lv:(Some v) inp_args in
+    let i:instr = mk_call ~ftype:myQ_typ ~lv:(Some v) "myQ" inp_args in
     
     (*mk tmp == outp*)
     let e:exp = BinOp(Eq,Lval v,integer outp, boolTyp) in 
@@ -240,20 +247,18 @@ let transform (ast:file) (filename:string) (sfname:string) (ssid:int)
 end  
 
 
-(*Reading testcases *)
+(*********************** Reading Testcases ***********************)
 
 let string_of_tc (tc:int list * int) : string = 
   let inp,outp = tc in 
   let inp = String.concat "; " (L.map string_of_int inp) in
   let outp = string_of_int outp in 
-  
   "([" ^ inp ^ "]" ^ ", " ^ outp ^ "]"
 
 let string_of_tcs (tcs:(int list * int) list) :string = 
   let tcs = L.map string_of_tc tcs in 
   let tcs = String.concat "; " tcs in
   "["^ tcs ^ "]"
-  
   
 
 let get_tcs (filename:string) : (int list * int) list = 
@@ -277,7 +282,7 @@ let get_tcs (filename:string) : (int list * int) list =
 	  tcs := (inp',outp')::!tcs
 	    
 	with _ -> 
-	  E.error "Ignoring wtf (%s, %s)" (String.concat ", " inp) outp
+	  E.error "Ignoring (%s, %s)" (String.concat ", " inp) outp
        )
      done;
    with _ -> ()
@@ -285,43 +290,160 @@ let get_tcs (filename:string) : (int list * int) list =
   L.rev !tcs     
 
 
-let main (): unit = begin
+(******************* Initialize: Assigning id's to stmts *******************)
+
+(*Makes every instruction into its own statement*)
+class everyVisitor = object
+  inherit nopCilVisitor
+  method vblock b = 
+    let action (b: block) : block = 
+      let change_stmt (s: stmt) : stmt list = 
+	match s.skind with
+	|Instr(h::t) -> 
+	  ({s with skind = Instr([h])})::L.map mkStmtOneInstr t
+	|_ -> [s]
+      in
+      let stmts = L.flatten (L.map change_stmt b.bstmts) in
+      {b with bstmts = stmts}
+    in
+    ChangeDoChildrenPost(b, action)
+end
+    
+
+let ht = Hashtbl.create 1024
+let ctr = ref 1
+let get_next_ct ct = let ct' = !ct in incr ct;  ct'
+
+(* List of stmts that can be modified *)
+let can_modify (sk:stmtkind) : bool= 
+  match sk with 
+  |Instr [Set(_)] -> true
+  |_ -> false
+
+(* Walks over AST and builds a hashtable that maps ints to stmts *)
+class numVisitor = object
+  inherit nopCilVisitor
+  method vblock b = 
+    let action (b: block) : block= 
+      let change_sid (s: stmt) : unit = 
+	if can_modify s.skind then (
+	  let ct = get_next_ct ctr in
+	  Hashtbl.add ht ct s.skind;
+	  s.sid <- ct
+	)
+	else s.sid <- 0;
+      in 
+      List.iter change_sid b.bstmts; 
+      b
+    in 
+    ChangeDoChildrenPost(b, action)
+end
+
+
+let initialize (ast:file) = 
+  visitCilFileSameGlobals (new everyVisitor) ast ;
+  visitCilFileSameGlobals (new numVisitor) ast
+
+
+
+(******************* Fault Localization *******************)
+
+(******************* 1. Coverage *******************)
+(*walks over AST and preceeds each stmt with a printf that writes out its sid*)
   
-  if Array.length Sys.argv < 2 then (
-    E.log "usage: tf [file.c]\n";
-    exit 1
-  );
+let fprintf_va = makeVarinfo true "fprintf" (TVoid [])
+let fprintf = Lval((Var fprintf_va), NoOffset)
+let stderr_va = makeVarinfo true "_coverage_fout" (TPtr(TVoid [], []))
+let stderr = Lval((Var stderr_va), NoOffset)
+let fflush_va = makeVarinfo true "fflush" (TVoid [])
+let fflush = Lval((Var fflush_va), NoOffset)
+let fopen_va = makeVarinfo true "fopen" (TVoid [])
+let fopen = Lval((Var fopen_va), NoOffset)
+
+let create_fprintf_stmt (sid: int) :stmt = 
+  let str = Printf.sprintf "%d\n" sid in
+  let str_exp = Const(CStr(str)) in
+  let instr1 = Call(None, fprintf, [stderr; str_exp], !currentLoc) in
+  let instr2 = Call(None, fflush, [stderr], !currentLoc) in 
+  let skind = Instr([instr1; instr2]) in
+  let new_s = mkStmt skind in 
+  new_s
+
+class instrumentVisitor = object
+  inherit nopCilVisitor
+  method vblock b = 
+    let action (b: block) :block= 
+      let insert_printf (s: stmt): stmt list = 
+	if s.sid > 0 then [create_fprintf_stmt s.sid; s]
+	else [s]
+      in
+      let result = List.map insert_printf b.bstmts in 
+      {b with bstmts = List.flatten result}
+    in
+    ChangeDoChildrenPost(b, action)
+      
+  method vfunc f = 
+    let action (f: fundec) :fundec = 
+      (*print 0 when entering main so we know it's a new run*)
+      if f.svar.vname = "main" then (
+	f.sbody.bstmts <- [create_fprintf_stmt 0] @ f.sbody.bstmts
+      );
+      f
+    in
+    ChangeDoChildrenPost(f, action)
+end
+
+
+
+
+(********************** Prototype **********************)
+
+let main () = begin
+  if Array.length Sys.argv < 2 then (E.log "usage: tf [file.c]\n";exit 1);
   initCIL();
 
   let filename = Sys.argv.(1) in 
   let ast = Frontc.parse filename () in 
-
-  E.log "*** Read testcases info for program '%s'\n" filename ;
-  let tcs = get_tcs filename in 
-  if L.length tcs <= 0 then (
-    E.log "no testcase found\n";
-    exit 1
-  );
-  E.log "|tcs|=%d\n" (L.length tcs);
-  (*E.log "%s\n" (string_of_tcs tcs);*)
+  write_src (filename ^ ".orig.c") ast;
 
 
-  ignore(Cfg.computeFileCFG ast);
+
+  (*** Initalize: assigning id's to stmts ***)
+  initialize ast;
+  write_src (filename ^ ".init.c") ast;
+
+  
 
 
-  let sfname = "myQ" in 
-  let ssid = 2 in 
-  let fd = ref None in 
+  (* E.log "*** Read testcases for program '%s'\n" filename ; *)
+  (* let tcs = get_tcs filename in  *)
+  (* if L.length tcs <= 0 then ( *)
+  (*   E.log "no testcase found\n"; *)
+  (*   exit 1 *)
+  (* ); *)
+  (* E.log "|tcs|=%d\n" (L.length tcs); *)
+  (* (\*E.log "%s\n" (string_of_tcs tcs);*\) *)
 
-  E.log "*** Get info on suspicious fun '%s' and sid %d\n" sfname ssid;
-  ignore(visitCilFileSameGlobals ((new spyFunVisitor) sfname fd) ast);
-  (*from fd figure out args type of myQ then do the conversion for tcs*)
-  let fd = forceOption !fd in 
 
 
-  E.log "*** Transform file '%s' wrt fun '%s', sid '%d' with %d tcs\n" 
-    filename sfname ssid (L.length tcs);
-  transform ast filename sfname ssid fd tcs;
+  (* ignore(Cfg.computeFileCFG ast); *)
+
+  (* let sfname = "myQ" in  *)
+  (* let ssid = 2 in  *)
+  (* let fd = ref None in  *)
+
+  (* E.log "*** Get info on suspicious fun '%s' and sid %d\n" sfname ssid; *)
+  (* ignore(visitCilFileSameGlobals ((new spyFunVisitor) sfname fd) ast); *)
+  (* (\*from fd figure out args type of myQ then do the conversion for tcs*\) *)
+  (* let fd = forceOption !fd in  *)
+
+
+  (* E.log "*** Transform file '%s' wrt fun '%s', sid '%d' with %d tcs\n"  *)
+  (*   filename sfname ssid (L.length tcs); *)
+  (* transform ast filename sfname ssid fd tcs; *)
+
+
+  E.log "*** done"
 
 end
 
