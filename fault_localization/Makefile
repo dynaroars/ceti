@@ -2,14 +2,15 @@ OCAML_OPTIONS = \
 -I /usr/local/lib/ocaml/3.11.2/cil/ \
 -I /usr/local/lib/ocaml/3.11.2/why3/ \
 -I /home/Storage/Src/Devel/WHY3/why3-0.82/src/util/ \
--I /usr/local/lib/ocaml/3.11.2/ocamlyices/ 
+-I /usr/local/lib/ocaml/3.11.2/ocamlyices/ \
+-I  /home/Storage/Src/Software/usr/lib/ocaml/batteries/
 
 OCAMLC =        ocamlc   $(OCAML_OPTIONS)
 OCAMLOPT =      ocamlopt $(OCAML_OPTIONS)
 OCAMLDEP =      ocamldep $(OCAML_OPTIONS)
 OCAMLLEX =      ocamllex 
 
-all: fault_localization testcase_generation vcgen
+all: fault_localization transformer tf testcase_generation vcgen
 
 %.cmo: %.ml 
 	@if [ -f $*.mli -a ! -f $*.cmi ] ; then $(OCAMLC) -c -g $*.mli ; fi 
@@ -38,12 +39,29 @@ fault_localization: $(FAULT_LOCALIZATION_MODULES:.cmo=.cmx)
 	$(OCAMLOPT) -o $@ unix.cmxa str.cmxa nums.cmxa cil.cmxa $^
 
 
+TRANSFORMER_MODULES = \
+	cil_common.cmo \
+	transformer.cmo \
+
+transformer: $(TRANSFORMER_MODULES:.cmo=.cmx) 
+	$(OCAMLOPT) -o $@ unix.cmxa str.cmxa nums.cmxa cil.cmxa  $^
+
+
+TF_MODULES = \
+	cil_common.cmo \
+	tf.cmo \
+
+tf: $(TF_MODULES:.cmo=.cmx) 
+	$(OCAMLOPT) -o $@ unix.cmxa str.cmxa batteries.cmxa nums.cmxa cil.cmxa  $^
+
+
 VCGEN_MODULES = \
 	cil_common.cmo \
 	vcgen.cmo \
 
 vcgen: $(VCGEN_MODULES:.cmo=.cmx) 
 	$(OCAMLOPT) -o $@ unix.cmxa str.cmxa nums.cmxa dynlink.cmxa cil.cmxa why3.cmxa  $^
+
 
 
 TESTCASE_GENERATION_MODULES = \
