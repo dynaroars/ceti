@@ -14,21 +14,26 @@ let write_src ?(use_stdout=false) (filename:string) (ast:file): unit =
     if !vDEBUG then E.log "write_src: \"%s\"\n" filename
   )
 
-let write_file ?(bin=true) (filename:string) content: unit = 
-  let fout = (if bin then open_out_bin else open_out) filename in
+let write_file_bin (filename:string) content: unit = 
+  let fout = open_out_bin filename in
   Marshal.to_channel fout content [];
   close_out fout;
-  if !vDEBUG then E.log "write_bin_file: \"%s\"\n" filename
+  if !vDEBUG then E.log "write_file_bin: \"%s\"\n" filename
+
+
+let write_file_str (filename:string) (content:string): unit = 
+  let fout = open_out filename in
+  Printf.fprintf fout "%s" content; 
+  close_out fout;
+  if !vDEBUG then E.log "write_file_str: \"%s\"\n" filename
+
 
 let read_file ?(bin=true) (filename:string): file =
   let fin = (if bin then open_in_bin else open_in) filename in
-  let ast = Marshal.from_channel fin in
+  let content = Marshal.from_channel fin in
   close_in fin;
   if !vDEBUG then E.log "read_file: \"%s\"\n" filename;
-  ast
-
-
-
+  content
 
 
 (*Common utils*)
@@ -100,3 +105,4 @@ let function_elements (fe : exp) : typ * (string * typ * attributes) list =
   | TFun(rt, Some stal, _, _) -> rt, stal
   | TFun(rt, None,      _, _) -> rt, []
   | _ -> E.s(E.bug "Expected function expression")
+    

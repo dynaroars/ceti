@@ -173,7 +173,6 @@ class everyVisitor = object
 end
 
 
-
 let ht = Hashtbl.create 1024
 let ctr = ref 1
 let get_next_ct ct = let ct' = !ct in incr ct;  ct'
@@ -204,15 +203,15 @@ class numVisitor = object
 end
 
 
-let initialize (ast:file) (filename:string) = 
+let initialize (ast:file) = 
   E.log "*** Initializing (assigning id's to stmts)***\n";
 
   visitCilFileSameGlobals (new everyVisitor) ast;
   visitCilFileSameGlobals (new numVisitor) ast;
 
-  write_file_bin (filename ^ ".ht")  (!ctr-1, ht);
-  write_file_bin (filename ^ ".ast") ast;
-  write_src (filename ^ ".ast.c") ast;
+  write_file_bin (ast.fileName ^ ".ht")  (!ctr-1, ht);
+  write_file_bin (ast.fileName ^ ".ast") ast;
+  write_src (ast.fileName ^ ".ast.c") ast;
 
   E.log "*** Initializing .. done ***\n"
 
@@ -439,7 +438,7 @@ let tarantula (n_g:int) (ht_g:(int,int) Hashtbl.t) (n_b:int) (ht_b:(int,int) Has
 
 
 
-let fault_loc (filename:string) (ast:file) (goods:testsuite) (bads:testsuite): sscore list = 
+let fault_loc (ast:file) (goods:testsuite) (bads:testsuite): sscore list = 
   E.log "*** Fault Localization ***\n";
 
   assert (L.length goods > 0) ;
@@ -447,26 +446,26 @@ let fault_loc (filename:string) (ast:file) (goods:testsuite) (bads:testsuite): s
 
   (*create cov file*)
   let ast_cov = copy_obj ast in
-  let filename_cov = filename ^ ".cov.c"  in
-  coverage ast_cov filename filename_cov;
+  let fileName_cov = ast.fileName ^ ".cov.c"  in
+  coverage ast_cov ast.fileName fileName_cov;
 
   (*compile cov file*)
-  let prog:string option = compile filename_cov in
+  let prog:string option = compile fileName_cov in
   let prog:string = forceOption prog in
   
   (*run prog to obtain good/bad paths*)
-  let path_generic = filename ^ ".path" in
-  let path_g = filename ^ ".gpath" in
-  let path_b = filename ^ ".bpath" in
+  let path_generic = ast.fileName ^ ".path" in
+  let path_g = ast.fileName ^ ".gpath" in
+  let path_b = ast.fileName ^ ".bpath" in
 
   (*good path*)
-  mk_run_testscript (filename ^ ".g.sh") prog 
-    (filename ^ ".outputs_g_dontcare") goods;
+  mk_run_testscript (ast.fileName ^ ".g.sh") prog 
+    (ast.fileName ^ ".outputs_g_dontcare") goods;
   Unix.rename path_generic path_g;
   
   (*bad path*)
-  mk_run_testscript (filename ^ ".b.sh") prog 
-    (filename ^ ".outputs_bad_dontcare") bads;
+  mk_run_testscript (ast.fileName ^ ".b.sh") prog 
+    (ast.fileName ^ ".outputs_bad_dontcare") bads;
   Unix.rename path_generic path_b;
 
   let n_g, ht_g = analyze_path path_g in
@@ -475,13 +474,13 @@ let fault_loc (filename:string) (ast:file) (goods:testsuite) (bads:testsuite): s
 
   
   (*debug: print out sid and corresponding statement*)
-  let filename_ast = filename ^ ".ast" in
-  assert (Sys.file_exists filename_ast);
-  let ast = read_file filename_ast in
+  let file_ast = ast.fileName ^ ".ast" in
+  assert (Sys.file_exists file_ast);
+  let ast' = read_file file_ast in
   
   L.iter(fun (sid,score) ->
     E.log "score %g\n" score;
-    visitCilFileSameGlobals (new printStmtVisitor (Some sid)) ast
+    visitCilFileSameGlobals (new printStmtVisitor (Some sid)) ast'
   ) sscores;
   
   E.log "*** Fault Localization .. done ***\n";
@@ -634,10 +633,29 @@ class myQVisitor sfname ssid (vs:varinfo list) (uks:varinfo list)= object(self)
 end
 
  
+(*transform main/myQ functions in ast wrt to given variables cvs*)
+let transform_file ast (id:int) (sfname:string) (ssid:int) 
+    (myQ_typ:typ) (cvs:varinfo list) (tcs:testsuite) = 
 
-let transform (ast:file) (filename:string) (sfname:string) (ssid:int) 
+  E.log "comb %d. |vs|=%d [%s]\n" id (L.length cvs) 
+    (String.concat ", " (L.map (fun vi -> vi.vname) cvs));
+  
+  let n_uks = succ (L.length cvs) in 
+  let (uks:varinfo list ref) = ref [] in 
+  
+  (*instr main*)
+  ignore(visitCilFileSameGlobals ((new mainVisitor) n_uks myQ_typ tcs uks) ast);
+  assert (L.length !uks = n_uks) ;
+  ignore(visitCilFileSameGlobals ((new myQVisitor) sfname ssid cvs !uks) ast);
+  
+  (*add include "klee/klee.h" to file*)
+  ast.globals <- (GText "#include \"klee/klee.h\"") :: ast.globals;
+  
+  write_src (ast.fileName ^ "." ^ string_of_int id ^ ".tf.c") ast
+    
+let transform (ast:file) (sfname:string) (ssid:int) 
     (fd: fundec) (tcs:testsuite) = begin
-
+      
   let combinations k list =
     let rec aux k acc emit = function
       | [] -> acc
@@ -656,34 +674,6 @@ let transform (ast:file) (filename:string) (sfname:string) (ssid:int)
     |_ -> E.s(E.error "%s is not fun typ %a\n" fd.svar.vname d_type fd.svar.vtype)
   in
 
-  let transform' (id:int) (cvs:varinfo list) = 
-    E.log "comb %d. |vs|=%d [%s]\n" id (L.length cvs) 
-      (String.concat ", " (L.map (fun vi -> vi.vname) cvs));
-
-    (*modify file*)
-    let ast' = copy_obj ast in 
-    let n_uks = succ (L.length cvs) in 
-    let (uks:varinfo list ref) = ref [] in 
-
-    (*instr main*)
-    ignore(visitCilFileSameGlobals ((new mainVisitor) n_uks myQ_typ tcs uks) ast');
-    assert (L.length !uks = n_uks) ;
-    ignore(visitCilFileSameGlobals ((new myQVisitor) sfname ssid cvs !uks) ast');
-
-    let filename_tf = filename ^ "." ^ string_of_int id ^ ".tf.c" in
-    write_src filename_tf ast';
-
-    (*hackish way to prepend #include "klee/klee.h" to the generated file*)
-    let cmd = 
-      Printf.sprintf "sed -i '1i #include \"klee/klee.h\"' %s" filename_tf in
-    E.log "cmd '%s'\n" cmd;
-
-    (match Unix.system cmd with
-    |Unix.WEXITED(0) -> ()
-    |_ -> E.s(E.error "'%s' failed" cmd))
-
-  in
-
 
   let vs' = fd.sformals@fd.slocals in 
   let vs = L.filter (fun vi -> vi.vtype = intType) vs' in
@@ -693,7 +683,7 @@ let transform (ast:file) (filename:string) (sfname:string) (ssid:int)
   let cvss = [[]]@cvss in
   E.log "total combs %d\n" (L.length cvss);
   
-  L.iter2 (fun id cvs -> transform' id cvs) (range (L.length cvss)) cvss 
+  L.iter2 (fun id cvs -> transform_file (copy_obj ast) id sfname ssid myQ_typ cvs tcs) (range (L.length cvss)) cvss 
   
     
 end  
@@ -738,15 +728,15 @@ let main () = begin
 
   *)
   let ast = Frontc.parse filename () in 
-
+  
   (*** Initalize: assigning id's to stmts ***)
-  initialize ast filename ;
+  initialize ast;
   (* visitCilFileSameGlobals ((new printStmtVisitor) None) ast; *)
 
 
   (*Fault Localization part -- optional*)
-  let ssids:sscore list = if !do_faultloc then fault_loc filename ast goods bads else [] in
-    
+  let ssids:sscore list = fault_loc ast goods bads in
+  assert (L.length ssids > 0);
     
   (*Bug Fixing part*)
   let sfname = "myQ" in
@@ -760,8 +750,8 @@ let main () = begin
 
 
   E.log "*** Transform file '%s' wrt fun '%s', sid '%d' with %d tcs\n"
-    filename sfname ssid (L.length tcs);
-  transform ast filename sfname ssid fd tcs;
+    ast.fileName sfname ssid (L.length tcs);
+  transform ast sfname ssid fd tcs;
 
   
 
