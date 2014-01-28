@@ -1,9 +1,10 @@
-(*ocamlfind ocamlopt -I /usr/local/lib/ocaml/3.11.2/cil/ -package str,batteries cil.cmxa  cil_common.cmx -linkpkg -thread tf.ml*)
+(*ocamlfind ocamlopt -package str,batteries,cil  cil_common.cmx -linkpkg -thread tf.ml*)
 
 open Cil
 open Cil_common
 module E = Errormsg
 module L = List
+module H = Hashtbl 
 
 let strip s =
   let is_space = function
@@ -30,15 +31,19 @@ let copy_obj (x : 'a) = let str = Marshal.to_string x [] in (Marshal.from_string
 
 (* Specific options for this file *)
 
-let uk_min = -1 
-let uk_max = 1
+let uk_min:int = -1 
+let uk_max:int =  1
+
+let max_uks:int = 2 
 
 let boolTyp:typ = intType
+
 
 type inp_t = int list 
 type outp_t = int 
 type tc_t = inp_t * outp_t
 type testsuite = tc_t list
+type sid_t = int
   
 (******************* Helper Functions *******************)
 let mk_vi ?(ftype=TVoid []) fname: varinfo = makeVarinfo true fname ftype
@@ -47,6 +52,9 @@ let mk_vi ?(ftype=TVoid []) fname: varinfo = makeVarinfo true fname ftype
 let mk_call ?(ftype=TVoid []) ?(av=None) fname args : instr = 
   let f = var(mk_vi ~ftype:ftype fname) in
   Call(av, Lval f, args, !currentLoc)
+
+let exp_of_vi (vi:varinfo): exp = Lval (var vi)
+
 
 
 (*gcc filename.c;  return "filename.exe" if success else None*)
@@ -85,7 +93,7 @@ let preprend (filename:string) (text:string) =
 ()
   
 (******************* Helper Visistors *******************)
-class printStmtVisitor (sid:int option) = object
+class printStmtVisitor (sid:sid_t option) = object
   inherit nopCilVisitor
   method vstmt s = 
     (match sid with
@@ -122,6 +130,7 @@ let get_tcs (filename:string) : (int list * int) list =
 
   let inputs = filename ^ ".inputs" in
   let outputs =  filename ^ ".outputs" in
+  E.log "%s" inputs ;
   assert (Sys.file_exists inputs);
   assert (Sys.file_exists outputs);
 
@@ -173,7 +182,7 @@ class everyVisitor = object
 end
 
 
-let ht = Hashtbl.create 1024
+let sid_stmt_ht:(int,stmt) H.t = H.create 1024
 let ctr = ref 1
 let get_next_ct ct = let ct' = !ct in incr ct;  ct'
 
@@ -191,7 +200,7 @@ class numVisitor = object
       let change_sid (s: stmt) : unit = 
 	if can_modify s.skind then (
 	  let ct = get_next_ct ctr in
-	  Hashtbl.add ht ct s.skind;
+	  H.add sid_stmt_ht ct s;
 	  s.sid <- ct
 	)
 	else s.sid <- 0;  (*Anything not considered has sid 0 *)
@@ -209,7 +218,7 @@ let initialize (ast:file) =
   visitCilFileSameGlobals (new everyVisitor) ast;
   visitCilFileSameGlobals (new numVisitor) ast;
 
-  write_file_bin (ast.fileName ^ ".ht")  (!ctr-1, ht);
+  write_file_bin (ast.fileName ^ ".ht")  (!ctr-1, sid_stmt_ht);
   write_file_bin (ast.fileName ^ ".ast") ast;
   write_src (ast.fileName ^ ".ast.c") ast;
 
@@ -310,7 +319,7 @@ let init_check (filename:string) (tcs:(int list * int) list)  =
 *)
 let stderr_va = mk_vi ~ftype:(TPtr(TVoid [], [])) "_coverage_fout"
 
-let create_fprintf_stmt (sid: int) :stmt = 
+let create_fprintf_stmt (sid : sid_t) :stmt = 
   let str = Printf.sprintf "%d\n" sid in
   let stderr = Lval (var(stderr_va)) in
   let instr1 = mk_call "fprintf" [stderr; Const (CStr(str))] in 
@@ -371,29 +380,29 @@ let coverage (ast:file) (filename:string) (filename_cov:string) =
 
 (******** Tarantula Fault Loc ********)
 (* Analyze execution path *)    
-let analyze_path (file_path:string): int * (int,int) Hashtbl.t= 
+let analyze_path (file_path:string): int * (int,int) H.t= 
 
   E.log "Analyze '%s'\n" file_path;
   let tc_ctr = ref 0 in
-  let ht_stat = Hashtbl.create 1024 in 
-  let mem = Hashtbl.create 1024 in 
+  let ht_stat = H.create 1024 in 
+  let mem = H.create 1024 in 
   let lines = read_lines file_path in 
   L.iter(fun line -> 
     let sid = int_of_string line in 
     if sid = 0 then (
       incr tc_ctr;
-      Hashtbl.clear mem;
+      H.clear mem;
     )
     else (
       let sid_tc = (sid, !tc_ctr) in
-      if not (Hashtbl.mem mem sid_tc) then (
-	Hashtbl.add mem sid_tc ();
+      if not (H.mem mem sid_tc) then (
+	H.add mem sid_tc ();
 	
 	let n_occurs = 
-	  if not (Hashtbl.mem ht_stat sid) then 1
-	  else succ (Hashtbl.find ht_stat sid)
+	  if not (H.mem ht_stat sid) then 1
+	  else succ (H.find ht_stat sid)
 
-	in Hashtbl.replace ht_stat sid n_occurs
+	in H.replace ht_stat sid n_occurs
       )
     )
   )lines;
@@ -402,14 +411,14 @@ let analyze_path (file_path:string): int * (int,int) Hashtbl.t=
 
 type sscore = int * float (* sid, suspicious score *)
 
-let tarantula (n_g:int) (ht_g:(int,int) Hashtbl.t) (n_b:int) (ht_b:(int,int) Hashtbl.t) : sscore list=
+let tarantula (n_g:int) (ht_g:(int,int) H.t) (n_b:int) (ht_b:(int,int) H.t) : sscore list=
   assert(n_g <> 0);
   assert(n_b <> 0);
 
-  let ht_sids = Hashtbl.create 1024 in 
+  let ht_sids = H.create 1024 in 
   let set_sids ht =
-    Hashtbl.iter (fun sid _ ->
-      if not (Hashtbl.mem ht_sids sid) then Hashtbl.add ht_sids sid ()
+    H.iter (fun sid _ ->
+      if not (H.mem ht_sids sid) then H.add ht_sids sid ()
     ) ht;
   in
   set_sids ht_g ;
@@ -418,9 +427,9 @@ let tarantula (n_g:int) (ht_g:(int,int) Hashtbl.t) (n_b:int) (ht_b:(int,int) Has
   let n_g' = float_of_int(n_g) in
   let n_b' = float_of_int(n_b) in
 
-  let rs = Hashtbl.fold (fun sid _ rs ->
-    let get_n_occur sid (ht: (int,int) Hashtbl.t) : float=
-      if Hashtbl.mem ht sid then float_of_int(Hashtbl.find ht sid) else 0. 
+  let rs = H.fold (fun sid _ rs ->
+    let get_n_occur sid (ht: (int,int) H.t) : float=
+      if H.mem ht sid then float_of_int(H.find ht sid) else 0. 
     in
 
     let freq_g = (get_n_occur sid ht_g) /. n_g' in
@@ -433,7 +442,11 @@ let tarantula (n_g:int) (ht_g:(int,int) Hashtbl.t) (n_b:int) (ht_b:(int,int) Has
   let rs = L.sort (fun (_,score1) (_,score2) -> compare score2 score1) rs in
 
   E.log "Tarantula stmt suspicious scores\n";
-  L.iter(fun (sid,score) -> E.log "%d -> %g\n" sid score) rs;
+  L.iter (
+    fun (sid,score) -> 
+      E.log "sid %d -> score %g\n%a\n" sid score d_stmt (H.find sid_stmt_ht sid)
+  )rs;
+  
   rs
 
 
@@ -472,17 +485,6 @@ let fault_loc (ast:file) (goods:testsuite) (bads:testsuite): sscore list =
   let n_b, ht_b = analyze_path path_b in
   let sscores = tarantula n_g ht_g n_b ht_b in
 
-  
-  (*debug: print out sid and corresponding statement*)
-  let file_ast = ast.fileName ^ ".ast" in
-  assert (Sys.file_exists file_ast);
-  let ast' = read_file file_ast in
-  
-  L.iter(fun (sid,score) ->
-    E.log "score %g\n" score;
-    visitCilFileSameGlobals (new printStmtVisitor (Some sid)) ast'
-  ) sscores;
-  
   E.log "*** Fault Localization .. done ***\n";
 
   sscores
@@ -490,10 +492,10 @@ let fault_loc (ast:file) (goods:testsuite) (bads:testsuite): sscore list =
 (******************* Transforming File *******************)
 
 
-let mk_uks_main (fd:fundec) (n_uks:int) (myQ_typ:typ) (tcs:testsuite) : (varinfo list * stmt list) =
+let mk_uks_main (fd:fundec) (n_uks:int) (mainQ_typ:typ) (tcs:testsuite) : (varinfo list * stmt list) =
   (*
     declare uks, setup constraints
-    insert uk to myQ calls
+    insert uk to mainQ calls
     create stmt if(e,l,..) from tcs s.t e is satisfied and l is reached
     only when tcs are passed
     also returns list of uks
@@ -537,17 +539,17 @@ let mk_uks_main (fd:fundec) (n_uks:int) (myQ_typ:typ) (tcs:testsuite) : (varinfo
   let mk_Q_call tc = 
     let inps,outp = tc in
 
-    (* mk  tmp = myQ(inp, uks) *)
-    let v:lval = var(makeTempVar fd myQ_typ) in 
+    (* mk  tmp = mainQ(inp, uks) *)
+    let v:lval = var(makeTempVar fd mainQ_typ) in 
     let inp_args = (L.map integer inps)@(L.map (fun lv -> Lval lv) uks_lv) in 
-    let i:instr = mk_call ~ftype:myQ_typ ~av:(Some v) "myQ" inp_args in
+    let i:instr = mk_call ~ftype:mainQ_typ ~av:(Some v) "mainQ" inp_args in
     
     (*mk tmp == outp*)
     let e:exp = BinOp(Eq,Lval v,integer outp, boolTyp) in 
     e, i
   in
   
-  let exps,myQ_calls_instrs = L.split (L.map mk_Q_call tcs) in
+  let exps,mainQ_calls_instrs = L.split (L.map mk_Q_call tcs) in
   
   (*mk if(e,l,...)*)
   let if_skind:stmtkind = 
@@ -567,17 +569,17 @@ let mk_uks_main (fd:fundec) (n_uks:int) (myQ_typ:typ) (tcs:testsuite) : (varinfo
        mkBlock [], !currentLoc) 
   in 
 
-  let instrs_skind:stmtkind = Instr(L.flatten(instrs)@myQ_calls_instrs) in
+  let instrs_skind:stmtkind = Instr(L.flatten(instrs)@mainQ_calls_instrs) in
 
   uks_vi, [mkStmt instrs_skind; mkStmt if_skind]
    
 
-class mainVisitor (n_uks:int) (myQ_typ:typ) (tcs:testsuite) (uks:varinfo list ref)= object
+class mainVisitor (n_uks:int) (mainQ_typ:typ) (tcs:testsuite) (uks:varinfo list ref)= object
   inherit nopCilVisitor
   method vfunc fd =
     let action(fd:fundec) : fundec =
       if fd.svar.vname = "main" then (
-	let uks',stmts = mk_uks_main fd n_uks myQ_typ tcs in
+	let uks',stmts = mk_uks_main fd n_uks mainQ_typ tcs in
 	(*fd.sbody.bstmts <- stmts @ fd.sbody.bstmts;*)
 	fd.sbody.bstmts <- stmts;
 	uks := uks' 
@@ -594,24 +596,25 @@ let mk_param_instr (a_i:instr) (vs:varinfo list) (uks:varinfo list): instr =
 
   let mk_add_exp (a:exp) (x:exp) (y:exp) = 
     BinOp(PlusA, a, BinOp(Mult, x, y, intType), intType) in
-  let mk_exp (x:varinfo):exp = Lval (var x) in  
+
 
   match a_i with 
   |Set(v,_,l)->
-    let vs = L.map mk_exp vs in 
-    let uks = L.map mk_exp uks in
+    let vs = L.map exp_of_vi vs in 
+    let uks = L.map exp_of_vi uks in
     let uk0,uks' = (L.hd uks), (L.tl uks) in 
     let r_exp = L.fold_left2 mk_add_exp uk0 uks' vs in
     Set(v,r_exp,l)
   |_ -> E.s(E.error "incorrect assignment instruction %a" d_instr a_i)
 
 
+(*TODO: save the names of all the functions that just added uks to its param list*)
+class mainQVisitor sfname ssid (vs:varinfo list) (uks:varinfo list) (ht:(string, unit) H.t) = object(self)
 
-class myQVisitor sfname ssid (vs:varinfo list) (uks:varinfo list)= object(self)
   inherit nopCilVisitor
   val mutable in_fun:bool = false
 
-  method vstmt s = 
+  method vstmt (s:stmt) = 
     let action (s: stmt) :stmt = 
       (match s.skind with 
       |Instr instrs when in_fun & s.sid = ssid & L.length instrs = 1 ->
@@ -624,18 +627,32 @@ class myQVisitor sfname ssid (vs:varinfo list) (uks:varinfo list)= object(self)
     in
     ChangeDoChildrenPost(s, action)
 
+  (*add uk's to function args*)
   method vfunc fd = 
     if fd.svar.vname <> "main" then (
-      setFormals fd (fd.sformals@uks) (*add uk to function args*)
+      setFormals fd (fd.sformals@uks) ;
+      H.add ht fd.svar.vname () 
     );
     in_fun <- fd.svar.vname = sfname ;
     DoChildren
 end
 
+class instrVisitor (uks:varinfo list) (ht:(string,unit) H.t)= object(self)
+  inherit nopCilVisitor
+  method vinst (i:instr) =
+    match i with 
+    | Call(lvopt,(Lval(Var(va),NoOffset)), args,loc) when H.mem ht va.vname ->
+      let uks' = L.map exp_of_vi uks in 
+      let i' = Call(lvopt,(Lval(Var(va),NoOffset)), args@uks',loc) in
+      ChangeTo([i'])
+
+    |_ -> SkipChildren
+end
+
  
-(*transform main/myQ functions in ast wrt to given variables cvs*)
-let transform_file ast (id:int) (sfname:string) (ssid:int) 
-    (myQ_typ:typ) (cvs:varinfo list) (tcs:testsuite) = 
+(*transform main/mainQ functions in ast wrt to given variables cvs*)
+let transform_file ast (id:int) (sfname:string) (ssid:sid_t) 
+    (mainQ_typ:typ) (cvs:varinfo list) (tcs:testsuite) = 
 
   E.log "comb %d. |vs|=%d [%s]\n" id (L.length cvs) 
     (String.concat ", " (L.map (fun vi -> vi.vname) cvs));
@@ -644,10 +661,14 @@ let transform_file ast (id:int) (sfname:string) (ssid:int)
   let (uks:varinfo list ref) = ref [] in 
   
   (*instr main*)
-  ignore(visitCilFileSameGlobals ((new mainVisitor) n_uks myQ_typ tcs uks) ast);
+  visitCilFileSameGlobals ((new mainVisitor) n_uks mainQ_typ tcs uks) ast;
   assert (L.length !uks = n_uks) ;
-  ignore(visitCilFileSameGlobals ((new myQVisitor) sfname ssid cvs !uks) ast);
-  
+
+  let ht = H.create 1024 in 
+
+  visitCilFileSameGlobals ((new mainQVisitor) sfname ssid cvs !uks ht) ast;
+  visitCilFileSameGlobals ((new instrVisitor) !uks ht) ast;
+
   (*add include "klee/klee.h" to file*)
   ast.globals <- (GText "#include \"klee/klee.h\"") :: ast.globals;
   
@@ -669,7 +690,7 @@ let transform (ast:file) (sfname:string) (ssid:int)
   in
 
   
-  let myQ_typ:typ = match fd.svar.vtype with 
+  let mainQ_typ:typ = match fd.svar.vtype with 
     |TFun(t,_,_,_) -> t
     |_ -> E.s(E.error "%s is not fun typ %a\n" fd.svar.vname d_type fd.svar.vtype)
   in
@@ -679,11 +700,13 @@ let transform (ast:file) (sfname:string) (ssid:int)
   let vs = L.filter (fun vi -> vi.vtype = intType) vs' in
   E.log "|vs| = %d (of int type %d)\n" (L.length vs') (L.length vs);
 
-  let cvss = L.flatten(L.map(fun siz -> combinations siz vs) (range(L.length vs))) in 
+  (*let n_uks = L.length vs in*)
+  let n_uks = max_uks in
+  let cvss = L.flatten(L.map(fun siz -> combinations siz vs)  (range (n_uks + 1))) in 
   let cvss = [[]]@cvss in
   E.log "total combs %d\n" (L.length cvss);
   
-  L.iter2 (fun id cvs -> transform_file (copy_obj ast) id sfname ssid myQ_typ cvs tcs) (range (L.length cvss)) cvss 
+  L.iter2 (fun id cvs -> transform_file (copy_obj ast) id sfname ssid mainQ_typ cvs tcs) (range (L.length cvss)) cvss 
   
     
 end  
@@ -698,7 +721,7 @@ let main () = begin
   let do_faultloc = ref false in
 
   let argDescr = [
-    "--faultloc", Arg.Set do_faultloc, "do fault localization";
+    "--do_faultloc", Arg.Set do_faultloc, "do fault localization";
   ] in
 
   let handleArg s =
@@ -709,7 +732,7 @@ let main () = begin
   Arg.parse (Arg.align argDescr) handleArg "usage: tf [file.c]\n";
 
   let filename = !filename in 
-  
+  assert (Sys.file_exists filename);
 
   E.log "*** Read testcases for program '%s'\n" filename ;
   let tcs = get_tcs filename in
@@ -723,7 +746,7 @@ let main () = begin
 
     Also, must have certain format  
     void main(..) {
-    printf(myQ);...
+    printf(mainQ);...
     }
 
   *)
@@ -735,17 +758,18 @@ let main () = begin
 
 
   (*Fault Localization part -- optional*)
-  let ssids:sscore list = fault_loc ast goods bads in
+  let ssids:sscore list = if !do_faultloc then fault_loc ast goods bads else [(5,1.0)] in
   assert (L.length ssids > 0);
+
     
   (*Bug Fixing part*)
-  let sfname = "myQ" in
+  let sfname = "mainQ" in
   let ssid = fst (L.hd ssids) in
   let fd = ref None in
 
   E.log "*** Get info on suspicious fun '%s' and sid %d\n" sfname ssid;
   ignore(visitCilFileSameGlobals ((new spyFunVisitor) sfname fd) ast);
-  (*from fd figure out args type of myQ then do the conversion for tcs*)
+  (*from fd figure out args type of mainQ then do the conversion for tcs*)
   let fd = forceOption !fd in
 
 
