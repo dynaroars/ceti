@@ -55,7 +55,7 @@ let mk_call ?(ftype=TVoid []) ?(av=None) fname args : instr =
 
 let exp_of_vi (vi:varinfo): exp = Lval (var vi)
 
-
+let get_names:(varinfo list -> string list) = L.map (fun vi -> vi.vname)
 
 (*gcc filename.c;  return "filename.exe" if success else None*)
 let compile (src:string): string option = 
@@ -88,10 +88,6 @@ let read_lines (filename:string) :string list =
   L.rev !lines
 
 
-(*preprend a string to a file*)
-let preprend (filename:string) (text:string) = 
-()
-  
 (******************* Helper Visistors *******************)
 class printStmtVisitor (sid:sid_t option) = object
   inherit nopCilVisitor
@@ -264,9 +260,6 @@ let mk_run_testscript testscript prog prog_output tcs =
   run_testscript testscript prog prog_output
     
     
-  
-
-
 (*partition tcs into 2 sets: good / bad*)
 let compare_outputs (prog_outputs:string) (tcs:testsuite) : testsuite * testsuite = 
   let prog_outputs = read_lines prog_outputs in 
@@ -492,7 +485,7 @@ let fault_loc (ast:file) (goods:testsuite) (bads:testsuite): sscore list =
 (******************* Transforming File *******************)
 
 
-let mk_uks_main (fd:fundec) (n_uks:int) (mainQ_typ:typ) (tcs:testsuite) : (varinfo list * stmt list) =
+let mk_main (fd:fundec) (n_uks:int) (mainQ_typ:typ) (tcs:testsuite) : (varinfo list * stmt list) =
   (*
     declare uks, setup constraints
     insert uk to mainQ calls
@@ -529,20 +522,20 @@ let mk_uks_main (fd:fundec) (n_uks:int) (mainQ_typ:typ) (tcs:testsuite) : (varin
       )
     in
     (vi,lv), instrs
-
-
   in
 
   let uks, instrs = L.split(L.map mk_uk (range n_uks)) in 
-  let uks_vi,uks_lv = L.split uks in 
+  let (uks_vi:varinfo list), (uks_lv: lval list) = L.split uks in 
+  
+  let uks_exps = L.map (fun lv -> Lval lv) uks_lv in 
 
   let mk_Q_call tc = 
     let inps,outp = tc in
 
     (* mk  tmp = mainQ(inp, uks) *)
     let v:lval = var(makeTempVar fd mainQ_typ) in 
-    let inp_args = (L.map integer inps)@(L.map (fun lv -> Lval lv) uks_lv) in 
-    let i:instr = mk_call ~ftype:mainQ_typ ~av:(Some v) "mainQ" inp_args in
+    let args = L.map integer inps in 
+    let i:instr = mk_call ~ftype:mainQ_typ ~av:(Some v) "mainQ" args in
     
     (*mk tmp == outp*)
     let e:exp = BinOp(Eq,Lval v,integer outp, boolTyp) in 
@@ -551,8 +544,9 @@ let mk_uks_main (fd:fundec) (n_uks:int) (mainQ_typ:typ) (tcs:testsuite) : (varin
   
   let exps,mainQ_calls_instrs = L.split (L.map mk_Q_call tcs) in
   
-  (*mk if(e,l,...)*)
+  (*mk if(e,l,...){printf("GOAL ..."); klee_assert(0);}*)
   let if_skind:stmtkind = 
+
     let and_exps (exps:exp list): exp = 
       let e0 = L.hd exps in 
       if L.length exps = 1 then e0
@@ -562,10 +556,17 @@ let mk_uks_main (fd:fundec) (n_uks:int) (mainQ_typ:typ) (tcs:testsuite) : (varin
       )
     in
 
-    let klee_assert_call:instr = mk_call "klee_assert" [zero] in 
+    (*printf("GOAL: uk0 %d uk1 %d .. \n",uk0,uk1,..); *)
+    let str = L.map (fun vi -> vi ^ " %d") (get_names uks_vi) in 
+    let str = "GOAL: " ^ (String.concat ", " str) ^ "\n" in 
+    let print_goal:instr = mk_call "printf" ([Const(CStr(str))]@uks_exps) in 
+
+    (*klee_assert(0);*)
+    let klee_assert_zero:instr = mk_call "klee_assert" [zero] in 
+
 
     If(and_exps exps, 
-       mkBlock [mkStmt (Instr([klee_assert_call]))], 
+       mkBlock [mkStmt (Instr([print_goal; klee_assert_zero]))], 
        mkBlock [], !currentLoc) 
   in 
 
@@ -579,7 +580,7 @@ class mainVisitor (n_uks:int) (mainQ_typ:typ) (tcs:testsuite) (uks:varinfo list 
   method vfunc fd =
     let action(fd:fundec) : fundec =
       if fd.svar.vname = "main" then (
-	let uks',stmts = mk_uks_main fd n_uks mainQ_typ tcs in
+	let uks',stmts = mk_main fd n_uks mainQ_typ tcs in
 	(*fd.sbody.bstmts <- stmts @ fd.sbody.bstmts;*)
 	fd.sbody.bstmts <- stmts;
 	uks := uks' 
@@ -608,7 +609,6 @@ let mk_param_instr (a_i:instr) (vs:varinfo list) (uks:varinfo list): instr =
   |_ -> E.s(E.error "incorrect assignment instruction %a" d_instr a_i)
 
 
-(*TODO: save the names of all the functions that just added uks to its param list*)
 class mainQVisitor sfname ssid (vs:varinfo list) (uks:varinfo list) (ht:(string, unit) H.t) = object(self)
 
   inherit nopCilVisitor
@@ -627,7 +627,7 @@ class mainQVisitor sfname ssid (vs:varinfo list) (uks:varinfo list) (ht:(string,
     in
     ChangeDoChildrenPost(s, action)
 
-  (*add uk's to function args*)
+  (*add uk's to function args, e.g., fun(int x, int uk0, int uk1);*)
   method vfunc fd = 
     if fd.svar.vname <> "main" then (
       setFormals fd (fd.sformals@uks) ;
@@ -637,6 +637,8 @@ class mainQVisitor sfname ssid (vs:varinfo list) (uks:varinfo list) (ht:(string,
     DoChildren
 end
 
+(*insert uk's as input to all function calls
+e.g., fun(x); -> fun(x,uk0,uk1); *)
 class instrVisitor (uks:varinfo list) (ht:(string,unit) H.t)= object(self)
   inherit nopCilVisitor
   method vinst (i:instr) =
@@ -654,8 +656,9 @@ end
 let transform_file ast (id:int) (sfname:string) (ssid:sid_t) 
     (mainQ_typ:typ) (cvs:varinfo list) (tcs:testsuite) = 
 
-  E.log "comb %d. |vs|=%d [%s]\n" id (L.length cvs) 
-    (String.concat ", " (L.map (fun vi -> vi.vname) cvs));
+  E.log "comb %d. |vs|=%d [%s]\n" 
+    id (L.length cvs) (String.concat ", " (get_names cvs));
+    
   
   let n_uks = succ (L.length cvs) in 
   let (uks:varinfo list ref) = ref [] in 
