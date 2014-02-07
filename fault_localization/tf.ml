@@ -1,10 +1,11 @@
 (*ocamlfind ocamlopt -package str,batteries,cil  cil_common.cmx -linkpkg -thread tf.ml*)
 
 open Cil
-open Cil_common
+(*open Cil_common*)
 module E = Errormsg
 module L = List
 module H = Hashtbl 
+module P = Printf
 
 let strip s =
   let is_space = function
@@ -25,24 +26,97 @@ let strip s =
     String.sub s !i (!j - !i + 1)
   else
     ""
-      
+let combinations k list =
+  let rec aux k acc emit = function
+    | [] -> acc
+    | h :: t ->
+      if k = 1 then aux k (emit [h] acc) emit t else
+        let new_emit x = emit (h :: x) in
+        aux k (aux (k-1) acc new_emit t) emit t
+  in
+  let emit x acc = x :: acc in
+  aux k [] emit list
+
+let forceOption (ao : 'a option) : 'a =
+  match ao with  | Some a -> a | None -> raise(Failure "forceOption")
+
+let write_file_str (filename:string) (content:string): unit = 
+  let fout = open_out filename in
+  P.fprintf fout "%s" content; 
+  close_out fout;
+  E.log "write_file_str: \"%s\"\n" filename
+
+let write_file_bin (filename:string) content: unit = 
+  let fout = open_out_bin filename in
+  Marshal.to_channel fout content [];
+  close_out fout;
+  E.log "write_file_bin: \"%s\"\n" filename
+
+let write_src ?(use_stdout=false) (filename:string) (ast:file): unit = 
+  let df oc =  dumpFile defaultCilPrinter oc filename ast in
+  if use_stdout then df stdout else (
+    let fout = open_out filename in
+    df fout;
+    close_out fout;
+    E.log "write_src: \"%s\"\n" filename
+  )
+
+(*check if s1 is a substring of s2*)
+let in_str s1 s2 = 
+  try
+    ignore(Str.search_forward (Str.regexp_string s1) s2 0);
+    true
+  with Not_found -> false
+
+let rec take n = function 
+  |[] -> [] 
+  |h::t -> if n = 0 then [] else h::take (n-1) t
+  
+(* let rec drop n = function *)
+(*   | [] -> [] *)
+(*   | h::t as l -> if n = 0 then l else drop (n-1)  *)
+
 let rec range ?(a=0) b = if a >= b then [] else a::range ~a:(succ a) b 
-let copy_obj (x : 'a) = let str = Marshal.to_string x [] in (Marshal.from_string str 0 : 'a)
+let copy_obj (x : 'a) = 
+  let s = Marshal.to_string x [] in (Marshal.from_string s 0 : 'a)
 
-(* Specific options for this file *)
+let assertFileExist filename = 
+  if not (Sys.file_exists filename) then (
+    E.log "'%s' does not exist\n" filename; exit 1
+  )
 
-let uk_min:int = -1 
-let uk_max:int =  1
 
+(*create a temp dir*)
+let mk_tmp_dir dprefix dsuffix = 
+  let td = Filename.temp_file dprefix dsuffix in
+  Unix.unlink td;
+  Unix.mkdir td 0o755;
+  td
+    
+let exec_cmd cmd = 
+  E.log "cmd '$ %s'\n" cmd ;
+  match Unix.system cmd with
+    |Unix.WEXITED(0) -> ()
+    |_ -> E.s(E.error "cmd failed '%s'" cmd)
+
+  
+(* Specific options for this program *)
+
+let uk0_min:int = -100000
+let uk0_max:int =  100000
+let uk_min :int = -1 
+let uk_max :int =  1
+
+let min_sscore:float = 0.5
 let max_uks:int = 2 
+let top_n_ssids:int = 10
 
 let boolTyp:typ = intType
 
-
 type inp_t = int list 
 type outp_t = int 
-type tc_t = inp_t * outp_t
-type testsuite = tc_t list
+type testcase = inp_t * outp_t
+type testsuite = testcase list
 type sid_t = int
   
 (******************* Helper Functions *******************)
@@ -64,7 +138,7 @@ let compile (src:string): string option =
   let exe = src ^ ".exe" in 
   (try Unix.unlink exe with _ -> () ) ; 
 
-  let cmd = Printf.sprintf "%s %s -o %s %s >& /dev/null" gcc src exe ldflags in
+  let cmd = P.sprintf "%s %s -o %s %s >& /dev/null" gcc src exe ldflags in
     
   E.log "cmd '%s'\n" cmd ;
 
@@ -89,23 +163,29 @@ let read_lines (filename:string) :string list =
 
 
 (******************* Helper Visistors *******************)
-class printStmtVisitor (sid:sid_t option) = object
+(*Finds function containing stmt with id sid*)
+class findFunVisitor (sid:int) (fd:fundec option ref)= object
   inherit nopCilVisitor
+
+  val mutable c_fd = None
+
+  method vfunc f = c_fd <- (Some f); DoChildren
+
   method vstmt s = 
-    (match sid with
-    |None -> E.log "sid %d:\n%a\n" s.sid d_stmt s
-    |Some sid -> if s.sid = sid then E.log "sid %d:\n%a\n" sid d_stmt s);
-    DoChildren (*or is it DoChildren ?*)
+    if s.sid = sid then (fd:= Some (forceOption c_fd); SkipChildren)
+    else DoChildren
+
 end
 
-class spyFunVisitor (fname:string) (fd:fundec option ref)= object(self)
-  inherit nopCilVisitor
-  method vfunc f = 
-    if f.svar.vname = fname then (
-      fd := Some f; 
-    );
-    SkipChildren
-end
+(*Find function containing stmt with id sid*)
+let fd_of_sid (ast:file) (sid:int): fundec = 
+  
+  let fd = ref None in
+  visitCilFileSameGlobals ((new findFunVisitor) sid fd) ast;
+  let fd = forceOption !fd in
+
+  E.log "Found sid %d in fun '%s'\n" sid fd.svar.vname ;
+  fd
 
 
 (*********************** Reading Testcases ***********************)
@@ -121,18 +201,15 @@ let string_of_tcs (tcs:testsuite) :string =
   let tcs = String.concat "; " tcs in
   "["^ tcs ^ "]"
   
+(*read testcases *)
+let get_tcs (filename:string) (inputs:string) (outputs:string): (int list * int) list = 
 
-let get_tcs (filename:string) : (int list * int) list = 
-
-  let inputs = filename ^ ".inputs" in
-  let outputs =  filename ^ ".outputs" in
-  E.log "%s" inputs ;
-  assert (Sys.file_exists inputs);
-  assert (Sys.file_exists outputs);
+  E.log "read tcs from '%s' and '%s' for program '%s'\n" inputs outputs filename;
 
   let inputs = read_lines inputs in
   let outputs = read_lines outputs in 
   assert (L.length inputs = L.length outputs);
+
   
   let tcs = 
     L.fold_left2 (fun acc inp outp ->
@@ -154,11 +231,56 @@ let get_tcs (filename:string) : (int list * int) list =
   assert(L.length tcs > 0);
 
   E.log "|tcs|=%d\n" (L.length tcs);
-  E.log "%s\n" (string_of_tcs tcs);
+  (*E.log "%s\n" (string_of_tcs tcs);*)
 
   tcs
 
 (******************* Initialize: Assigning id's to stmts *******************)
+(*break conditional / loop guard to 
+  if(complex_exp) to 
+  int tmp = complex_exp; 
+  if(tmp) 
+*)
+
+let can_break_exp (e:exp) : bool = 
+    match e with
+    |Lval _ -> false
+    |_ -> true
+
+class breakCondVisitor = object
+  inherit nopCilVisitor
+  val cur_fd = ref None
+  method vfunc fd = cur_fd := (Some fd); DoChildren
+
+  method vblock b = 
+    let action (b: block) : block = 
+      let change_stmt (s: stmt) : stmt list = 
+	match s.skind with
+	|If(e,b1,b2,loc) when can_break_exp e ->
+	  let typ = typeOf e in
+	  let temp:lval = var(makeTempVar (forceOption !cur_fd) typ) in
+	  let i:instr = Set(temp,e,loc) in
+	  let s1 = {s with skind = Instr [i]} in 
+ 
+	  let new_skind:stmtkind = If(Lval temp,b1,b2,loc) in
+	  let s2 = mkStmt new_skind in
+
+	  E.log "breaking %a\n to\n %a\n%a\n" d_stmt s d_stmt s1 d_stmt s2;
+	  
+	  [s1;s2]
+
+	(*|While _ may be not really necessary*)
+
+	|_ -> [s]
+      in
+      let stmts = L.flatten (L.map change_stmt b.bstmts) in
+      {b with bstmts = stmts}
+    in
+    ChangeDoChildrenPost(b, action)
+
+
+end
+
 
 (*Makes every instruction into its own statement*)
 class everyVisitor = object
@@ -168,7 +290,7 @@ class everyVisitor = object
       let change_stmt (s: stmt) : stmt list = 
 	match s.skind with
 	|Instr(h::t) -> 
-	  ({s with skind = Instr([h])})::L.map mkStmtOneInstr t
+	  {s with skind = Instr([h])}::L.map mkStmtOneInstr t
 	|_ -> [s]
       in
       let stmts = L.flatten (L.map change_stmt b.bstmts) in
@@ -183,8 +305,7 @@ let ctr = ref 1
 let get_next_ct ct = let ct' = !ct in incr ct;  ct'
 
 (* List of stmts that can be modified *)
-let can_modify (sk:stmtkind) : bool= 
-  match sk with 
+let can_modify:stmtkind->bool = function 
   |Instr [Set(_)] -> true
   |_ -> false
 
@@ -208,10 +329,12 @@ class numVisitor = object
 end
 
 
-let initialize (ast:file) = 
+let initialize_ast (ast:file) = 
   E.log "*** Initializing (assigning id's to stmts)***\n";
-
+ 
   visitCilFileSameGlobals (new everyVisitor) ast;
+  visitCilFileSameGlobals (new breakCondVisitor) ast;
+
   visitCilFileSameGlobals (new numVisitor) ast;
 
   write_file_bin (ast.fileName ^ ".ht")  (!ctr-1, sid_stmt_ht);
@@ -221,6 +344,25 @@ let initialize (ast:file) =
   E.log "*** Initializing .. done ***\n"
 
 
+let initialize_files filename inputs outputs = 
+  let tdir = mk_tmp_dir "cece_" "_tdir"  in  
+
+  let ck_cp fn = 
+    assertFileExist fn;
+    let fn' = P.sprintf "%s/%s" tdir (Filename.basename fn) in 
+    exec_cmd (P.sprintf "cp %s %s" fn fn');
+    fn'
+  in
+  
+  let filename = ck_cp filename in
+  let inputs = ck_cp inputs in
+  let outputs = ck_cp outputs in 
+  tdir,filename, inputs, outputs
+
+
+let cleanup tdir = 
+  E.log "Note: all temp files are created in dir '%s'\n" tdir 
+    
 
 (********************** Initial Check **********************)
 
@@ -231,10 +373,10 @@ let mk_testscript (testscript:string) (tcs:(int list * int) list) =
     let inp = String.concat " " (L.map string_of_int inp) in
 
     (*if use & then things are done in parallel but order mesed up*)
-    Printf.sprintf "($1 %s >> $2) ;" inp 
+    P.sprintf "($1 %s >> $2) ;" inp 
   ) tcs in
   let content = String.concat "\n" content in
-  let content = Printf.sprintf "#!/bin/bash\nulimit -t 1\n%s\nwait\nexit 0\n" content in
+  let content = P.sprintf "#!/bin/bash\nulimit -t 1\n%s\nwait\nexit 0\n" content in
   
   E.log "%s" content;
   write_file_str testscript content
@@ -245,13 +387,10 @@ let run_testscript (testscript:string) (prog:string) (prog_output:string) =
 
   (try Unix.unlink prog_output with _ -> () ) ; 
 
-  let prog = Printf.sprintf "./%s" prog in
-  let cmd = Printf.sprintf "sh %s %s %s &> /dev/null" testscript prog prog_output in
-  E.log "cmd '%s'\n" cmd ; 
+  let prog = P.sprintf "%s" prog in (*"./%s"*)
+  let cmd = P.sprintf "sh %s %s %s &> /dev/null" testscript prog prog_output in
+  exec_cmd cmd
 
-  match Unix.system cmd with
-    |Unix.WEXITED(0) -> ()
-    |_ -> E.s(E.error "'%s' failed" cmd)
 
 let mk_run_testscript testscript prog prog_output tcs = 
   if Sys.file_exists testscript then E.log "script '%s' exists .. skipped\n" testscript
@@ -276,7 +415,7 @@ let compare_outputs (prog_outputs:string) (tcs:testsuite) : testsuite * testsuit
   goods, bads
 
 
-let init_check (filename:string) (tcs:(int list * int) list)  = 
+let checkInit (filename:string) (tcs:(int list * int) list)  = 
   (*do some prelim checking and obtain good/test testcases*)
   E.log "*** Init Check ***\n";
 
@@ -292,7 +431,7 @@ let init_check (filename:string) (tcs:(int list * int) list)  =
     If yes then exit. If no then there's bug to fix*)
   let goods,bads = compare_outputs prog_output tcs in 
   let nbads = L.length bads in
-  if nbads = 0 then (E.log "All tests passed .. nothing else to do\n"; exit 1)
+  if nbads = 0 then (E.log "All tests passed .. no bug found\n"; exit 0)
   else (E.log "%d tests failed\n" nbads);
   
   E.log "*** Init Check .. done ***\n";
@@ -313,7 +452,7 @@ let init_check (filename:string) (tcs:(int list * int) list)  =
 let stderr_va = mk_vi ~ftype:(TPtr(TVoid [], [])) "_coverage_fout"
 
 let create_fprintf_stmt (sid : sid_t) :stmt = 
-  let str = Printf.sprintf "%d\n" sid in
+  let str = P.sprintf "%d\n" sid in
   let stderr = Lval (var(stderr_va)) in
   let instr1 = mk_call "fprintf" [stderr; Const (CStr(str))] in 
   let instr2 = mk_call "fflush" [stderr] in
@@ -361,7 +500,7 @@ let coverage (ast:file) (filename:string) (filename_cov:string) =
   let arg1 = Const(CStr(filename ^ ".path" )) in
   let arg2 = Const(CStr("ab")) in
   let instr = mk_call ~av:(Some lhs) "fopen" [arg1; arg2] in
-  let new_s = Cil.mkStmt (Instr[instr]) in 
+  let new_s = mkStmt (Instr[instr]) in 
 
   let fd = getGlobInit ast in
   fd.sbody.bstmts <- new_s :: fd.sbody.bstmts;
@@ -434,12 +573,8 @@ let tarantula (n_g:int) (ht_g:(int,int) H.t) (n_b:int) (ht_b:(int,int) H.t) : ss
 
   let rs = L.sort (fun (_,score1) (_,score2) -> compare score2 score1) rs in
 
-  E.log "Tarantula stmt suspicious scores\n";
-  L.iter (
-    fun (sid,score) -> 
-      E.log "sid %d -> score %g\n%a\n" sid score d_stmt (H.find sid_stmt_ht sid)
-  )rs;
-  
+  (*keep scores > 0*)
+  let rs = L.filter (fun (_,score) -> score >= min_sscore) rs in 
   rs
 
 
@@ -483,104 +618,124 @@ let fault_loc (ast:file) (goods:testsuite) (bads:testsuite): sscore list =
   sscores
 
 (******************* Transforming File *******************)
+(*declare and set constraints on uk:
+  int uk;
+  klee_make_symbol(&uk,sizeof(uk),"uk");
+  mk_klee_assume(min<=uk<=max);
+*)
 
-
-let mk_main (fd:fundec) (n_uks:int) (mainQ_typ:typ) (tcs:testsuite) : (varinfo list * stmt list) =
-  (*
-    declare uks, setup constraints
-    insert uk to mainQ calls
-    create stmt if(e,l,..) from tcs s.t e is satisfied and l is reached
-    only when tcs are passed
-    also returns list of uks
-  *)
+let mk_uk (main_fd:fundec) (uid:int) : (varinfo*lval) * (instr list) = 
+  let vname = ("uk_" ^ string_of_int uid) in 
   
-  let mk_uk (uid:int) : (varinfo*lval) * (instr list) = 
-    let vname = ("uk_" ^ string_of_int uid) in 
-
-    (*declare uks*)
-    let vi:varinfo = makeLocalVar fd  vname intType in 
-    let lv:lval = var vi in 
-
-    (* make klee_make_symbolic(&uk,sizeof(uk),"uk") *)
-    let addrof_uk = mkAddrOf(lv) in 
-    let sizeof_uk = SizeOfE(Lval lv) in 
-    let const_str:exp = Const (CStr vname) in 
-    let mk_sym_instr:instr = 
-      mk_call "klee_make_symbolic" [addrof_uk; sizeof_uk; const_str] in
-
-    
-    (* make klee_assume(min <= uk) , klee_assume(uk <= max) for uk1 ...n*)
-    let instrs = if uid = 0 then
-	[mk_sym_instr]
-      else (
-	let e_lb = BinOp(Le,integer uk_min,Lval lv, boolTyp) in
-	let e_ub = BinOp(Le,Lval lv, integer uk_max, boolTyp) in
-	
-	let klee_assert_lb:instr = mk_call "klee_assume" [e_lb] in 
-	let klee_assert_ub:instr = mk_call "klee_assume" [e_ub] in 
-	[mk_sym_instr; klee_assert_lb; klee_assert_ub]
-      )
-    in
-    (vi,lv), instrs
-  in
-
-  let uks, instrs = L.split(L.map mk_uk (range n_uks)) in 
-  let (uks_vi:varinfo list), (uks_lv: lval list) = L.split uks in 
+  (*declare uks*)
+  let vi:varinfo = makeLocalVar main_fd  vname intType in 
+  let lv:lval = var vi in 
   
-  let uks_exps = L.map (fun lv -> Lval lv) uks_lv in 
+  (*klee_make_symbolic(&uk,sizeof(uk),"uk") *)
+  let mk_sym_instr:instr = mk_call "klee_make_symbolic" 
+    [mkAddrOf(lv); SizeOfE(Lval lv); Const (CStr vname)] in
+  
+  (*klee_assume(min <= uk) , klee_assume(uk <= max) *)
+  let min_,max_ = if uid = 0 then uk0_min,uk0_max else uk_min,uk_max in
+  let klee_assert_lb:instr = mk_call "klee_assume" 
+    [BinOp(Le,integer min_,Lval lv, boolTyp)] in 
+  let klee_assert_ub:instr = mk_call "klee_assume" 
+    [BinOp(Le,Lval lv, integer max_, boolTyp)] in 
 
-  let mk_Q_call tc = 
+  (vi,lv), [mk_sym_instr; klee_assert_lb; klee_assert_ub]
+
+(*make calls to mainQ on test inp/oupt:
+  mainQ_typ temp;
+  temp = mainQ(inp0,inp1,..);
+  temp == outp
+*)
+let mk_mainQ_call (main_fd:fundec) (mainQ_typ:typ) (tc:testcase) = 
     let inps,outp = tc in
 
-    (* mk  tmp = mainQ(inp, uks) *)
-    let v:lval = var(makeTempVar fd mainQ_typ) in 
+    (*mainQ_typ temp;*)
+    let temp:lval = var(makeTempVar main_fd mainQ_typ) in 
+
+    (*tmp = mainQ(inp, uks);*)
+    (*todo: should be the types of mainQ inps , not integer*)
     let args = L.map integer inps in 
-    let i:instr = mk_call ~ftype:mainQ_typ ~av:(Some v) "mainQ" args in
-    
+    let i:instr = mk_call ~ftype:mainQ_typ ~av:(Some temp) "mainQ" args in
+
     (*mk tmp == outp*)
-    let e:exp = BinOp(Eq,Lval v,integer outp, boolTyp) in 
-    e, i
-  in
-  
-  let exps,mainQ_calls_instrs = L.split (L.map mk_Q_call tcs) in
-  
-  (*mk if(e,l,...){printf("GOAL ..."); klee_assert(0);}*)
-  let if_skind:stmtkind = 
+    (*todo: should convert outp according to mainQ type*)
+    let e:exp = BinOp(Eq,Lval temp,integer outp, boolTyp) in 
 
-    let and_exps (exps:exp list): exp = 
-      let e0 = L.hd exps in 
-      if L.length exps = 1 then e0
-      else(
-	let typ = typeOf e0 in
-	L.fold_left (fun e e' -> BinOp(LAnd,e,e',typ)) e0 (L.tl exps)
-      )
+    i,e
+
+(*creates reachability "goal" statement 
+  if(e_1,..,e_n){
+  printf("GOAL: uk0 %d, uk1 %d ..\n",uk0,uk1);
+  klee_assert(0);
+  }
+*)
+
+let mk_goal (exps:exp list) (uks_exps:exp list):stmtkind = 
+
+  let and_exps (exps:exp list): exp = 
+    let e0 = L.hd exps in 
+    if L.length exps = 1 then e0
+    else(
+      let typ = typeOf e0 in
+      L.fold_left (fun e e' -> BinOp(LAnd,e,e',typ)) e0 (L.tl exps)
+    )
     in
+  
+  (*printf("GOAL: uk0 %d uk1 %d .. \n",uk0,uk1,..); *)
+  let str = L.map (
+    function
+    |Lval (Var vi,_) -> vi.vname ^ " %d"
+    |_ -> failwith "not poss: uk must be Lval ..") uks_exps
+  in
+  let str = "GOAL: " ^ (String.concat ", " str) ^ "\n" in 
+  let print_goal:instr = mk_call "printf" ([Const(CStr(str))]@uks_exps) in 
+  
+  (*klee_assert(0);*)
+  let klee_assert_zero:instr = mk_call "klee_assert" [zero] in 
+  
+  
+  If(and_exps exps, 
+     mkBlock [mkStmt (Instr([print_goal; klee_assert_zero]))], 
+     mkBlock [], !currentLoc) 
 
-    (*printf("GOAL: uk0 %d uk1 %d .. \n",uk0,uk1,..); *)
-    let str = L.map (fun vi -> vi ^ " %d") (get_names uks_vi) in 
-    let str = "GOAL: " ^ (String.concat ", " str) ^ "\n" in 
-    let print_goal:instr = mk_call "printf" ([Const(CStr(str))]@uks_exps) in 
 
-    (*klee_assert(0);*)
-    let klee_assert_zero:instr = mk_call "klee_assert" [zero] in 
+(*Instrument main function*)
+let mk_main (main_fd:fundec) (mainQ_fd:fundec) (n_uks:int) (tcs:testsuite)
+    : (varinfo list * stmt list) =
+  let uks, instrs1 = L.split(L.map (mk_uk main_fd) (range n_uks)) in 
+  let (uks_vi:varinfo list), (uks_lv: lval list) = L.split uks in 
+  
+  (*declare uks and setup constraints*)
+  let uks_exps = L.map (fun lv -> Lval lv) uks_lv in 
 
+  (*make mainQ calls and expressions based on testcases*)
+  let mainQ_typ:typ = match mainQ_fd.svar.vtype with 
+    |TFun(t,_,_,_) -> t
+    |_ -> E.s(E.error "%s is not fun typ %a\n" 
+		mainQ_fd.svar.vname d_type mainQ_fd.svar.vtype)
+  in
 
-    If(and_exps exps, 
-       mkBlock [mkStmt (Instr([print_goal; klee_assert_zero]))], 
-       mkBlock [], !currentLoc) 
-  in 
+  (*make big if goal *)
+  let instrs2,exps = L.split (L.map (fun tc -> 
+    mk_mainQ_call main_fd mainQ_typ tc) tcs) in
+    
 
-  let instrs_skind:stmtkind = Instr(L.flatten(instrs)@mainQ_calls_instrs) in
+  let if_skind:stmtkind = mk_goal exps uks_exps in
+
+  let instrs_skind:stmtkind = Instr(L.flatten(instrs1)@instrs2) in
 
   uks_vi, [mkStmt instrs_skind; mkStmt if_skind]
    
 
-class mainVisitor (n_uks:int) (mainQ_typ:typ) (tcs:testsuite) (uks:varinfo list ref)= object
+class mainVisitor  (mainQ_fd:fundec) (n_uks:int) (tcs:testsuite) (uks:varinfo list ref)= object
   inherit nopCilVisitor
   method vfunc fd =
     let action(fd:fundec) : fundec =
       if fd.svar.vname = "main" then (
-	let uks',stmts = mk_main fd n_uks mainQ_typ tcs in
+	let uks',stmts = mk_main fd mainQ_fd n_uks tcs in
 	(*fd.sbody.bstmts <- stmts @ fd.sbody.bstmts;*)
 	fd.sbody.bstmts <- stmts;
 	uks := uks' 
@@ -609,41 +764,43 @@ let mk_param_instr (a_i:instr) (vs:varinfo list) (uks:varinfo list): instr =
   |_ -> E.s(E.error "incorrect assignment instruction %a" d_instr a_i)
 
 
-class mainQVisitor sfname ssid (vs:varinfo list) (uks:varinfo list) (ht:(string, unit) H.t) = object(self)
-
+class suspStmtVisitor (ssid:int) (vs:varinfo list) (uks:varinfo list) (modified:bool ref) = object(self)
   inherit nopCilVisitor
-  val mutable in_fun:bool = false
-
   method vstmt (s:stmt) = 
     let action (s: stmt) :stmt = 
       (match s.skind with 
-      |Instr instrs when in_fun & s.sid = ssid & L.length instrs = 1 ->
-	E.log "Found s_stmt:\n%a\n" d_stmt s;
+      |Instr instrs when s.sid = ssid & L.length instrs = 1 ->
 	let new_i = mk_param_instr (L.hd instrs) vs uks in
-	s.skind <- Instr [new_i]
+	s.skind <- Instr [new_i];
+	modified := true
       |_ -> ()
       );
       s
     in
     ChangeDoChildrenPost(s, action)
+end      
 
-  (*add uk's to function args, e.g., fun(int x, int uk0, int uk1);*)
+
+(*add uk's to function args, e.g., fun(int x, int uk0, int uk1);*)
+class funInstrVisitor (uks:varinfo list) (funs_ht:(string, unit) H.t) = object(self)
+
+  inherit nopCilVisitor
   method vfunc fd = 
     if fd.svar.vname <> "main" then (
       setFormals fd (fd.sformals@uks) ;
-      H.add ht fd.svar.vname () 
+      H.add funs_ht fd.svar.vname () 
     );
-    in_fun <- fd.svar.vname = sfname ;
     DoChildren
 end
 
 (*insert uk's as input to all function calls
 e.g., fun(x); -> fun(x,uk0,uk1); *)
-class instrVisitor (uks:varinfo list) (ht:(string,unit) H.t)= object(self)
+class instrCallVisitor (uks:varinfo list) (funs_ht:(string,unit) H.t)= object(self)
   inherit nopCilVisitor
   method vinst (i:instr) =
     match i with 
-    | Call(lvopt,(Lval(Var(va),NoOffset)), args,loc) when H.mem ht va.vname ->
+    | Call(lvopt,(Lval(Var(va),NoOffset)), args,loc) 
+	when H.mem funs_ht va.vname ->
       let uks' = L.map exp_of_vi uks in 
       let i' = Call(lvopt,(Lval(Var(va),NoOffset)), args@uks',loc) in
       ChangeTo([i'])
@@ -653,94 +810,143 @@ end
 
  
 (*transform main/mainQ functions in ast wrt to given variables cvs*)
-let transform_file ast (id:int) (sfname:string) (ssid:sid_t) 
-    (mainQ_typ:typ) (cvs:varinfo list) (tcs:testsuite) = 
+let transform_file ast (mainQ_fd:fundec) (cid:int) (ssid:sid_t) 
+    (cvs:varinfo list) (tcs:testsuite) = 
 
-  E.log "comb %d. |vs|=%d [%s]\n" 
-    id (L.length cvs) (String.concat ", " (get_names cvs));
+  E.log "** comb %d. |vs|=%d [%s]\n" 
+    cid (L.length cvs) (String.concat ", " (get_names cvs));
     
-  
   let n_uks = succ (L.length cvs) in 
   let (uks:varinfo list ref) = ref [] in 
   
   (*instr main*)
-  visitCilFileSameGlobals ((new mainVisitor) n_uks mainQ_typ tcs uks) ast;
-  assert (L.length !uks = n_uks) ;
+  visitCilFileSameGlobals ((new mainVisitor) mainQ_fd n_uks tcs uks) ast;
+  let uks = !uks in 
+  assert (L.length uks = n_uks) ;
 
-  let ht = H.create 1024 in 
+  (*modify suspStmt: stay with this order, mod sstmt first before doing others*)
+  let modified = ref false in
+  visitCilFileSameGlobals ((new suspStmtVisitor) ssid cvs uks modified) ast;
+  assert (!modified);
 
-  visitCilFileSameGlobals ((new mainQVisitor) sfname ssid cvs !uks ht) ast;
-  visitCilFileSameGlobals ((new instrVisitor) !uks ht) ast;
+  (*add uk's to fun decls and fun calls*)
+  let funs_ht = H.create 1024 in 
+  visitCilFileSameGlobals ((new funInstrVisitor) uks funs_ht) ast;
+  visitCilFileSameGlobals ((new instrCallVisitor) uks funs_ht) ast;
 
   (*add include "klee/klee.h" to file*)
   ast.globals <- (GText "#include \"klee/klee.h\"") :: ast.globals;
   
-  write_src (ast.fileName ^ "." ^ string_of_int id ^ ".tf.c") ast
+  write_src (P.sprintf "%s.s%d.c%d.tf.c" ast.fileName ssid cid) ast
     
-let transform (ast:file) (sfname:string) (ssid:int) 
-    (fd: fundec) (tcs:testsuite) = begin
-      
-  let combinations k list =
-    let rec aux k acc emit = function
-      | [] -> acc
-      | h :: t ->
-        if k = 1 then aux k (emit [h] acc) emit t else
-          let new_emit x = emit (h :: x) in
-          aux k (aux (k-1) acc new_emit t) emit t
-    in
-    let emit x acc = x :: acc in
-    aux k [] emit list
-  in
 
+let transform (ast:file) (ssid:int) (tcs:testsuite) = 
+
+  E.log "** Transform file '%s' wrt sid '%d' with %d tcs\n"
+    ast.fileName ssid (L.length tcs);
+  E.log "%a\n" d_stmt (H.find sid_stmt_ht ssid);
+
+  (*find mainQ*)
+  let mainQ_fd = ref None in
+  iterGlobals ast (function
+  |GFun(f,_) when f.svar.vname = "mainQ" -> mainQ_fd := Some f
+  |_ -> ()
+  );
+
+  let mainQ_fd = 
+    match !mainQ_fd with
+    |Some f -> f
+    |None -> E.s (E.error "'%s' does not have a mainQ function\n" ast.fileName)
+  in
   
-  let mainQ_typ:typ = match fd.svar.vtype with 
-    |TFun(t,_,_,_) -> t
-    |_ -> E.s(E.error "%s is not fun typ %a\n" fd.svar.vname d_type fd.svar.vtype)
+  (*find which function contains suspicious stmt id*)
+  let s_fd = fd_of_sid ast ssid in 
+
+  (*obtain usuable variables from s_fd*)
+  let vs' = s_fd.sformals@s_fd.slocals in 
+
+  let vi_pred vi = 
+    vi.vtype = intType && 
+    not (in_str "__cil_tmp" vi.vname) &&
+    not (in_str "tmp___" vi.vname)
   in
 
+  let vs = L.filter vi_pred vs' in
 
-  let vs' = fd.sformals@fd.slocals in 
-  let vs = L.filter (fun vi -> vi.vtype = intType) vs' in
-  E.log "|vs| = %d (of int type %d)\n" (L.length vs') (L.length vs);
+  E.log "Using %d/%d avail vars in fun %s\n" 
+    (L.length vs) (L.length vs') s_fd.svar.vname;
+  E.log "[%s]\n" (String.concat ", " (get_names vs));
 
   (*let n_uks = L.length vs in*)
   let n_uks = max_uks in
-  let cvss = L.flatten(L.map(fun siz -> combinations siz vs)  (range (n_uks + 1))) in 
+  let cvss = 
+    L.flatten(L.map(fun siz -> combinations siz vs) (range (n_uks + 1))) in 
+		
   let cvss = [[]]@cvss in
   E.log "total combs %d\n" (L.length cvss);
   
-  L.iter2 (fun id cvs -> transform_file (copy_obj ast) id sfname ssid mainQ_typ cvs tcs) (range (L.length cvss)) cvss 
+  L.iter2 (fun cid cvs -> 
+    transform_file (copy_obj ast) mainQ_fd cid ssid cvs tcs) 
+    (range (L.length cvss)) cvss 
   
-    
-end  
+  
+
+let bug_fix (ast:file) (ssids:sscore list) (tcs:testsuite)= 
+  E.log "*** Bug Fixing ***\n";  
+
+  (*iterate through top n ssids*)
+  let ssids = take top_n_ssids ssids in 
+
+  E.log "Applying bug fix to %d ssids\n" (L.length ssids);
+  L.iter (fun (ssid:sscore) -> transform ast (fst ssid) tcs) ssids ;
+
+  (*run klee on transformed files
+    $time python klee_reader.py tests/p.c --do_parallel
+  *)
+
+  E.log "Running Klee on transformed files from '%s'" ast.fileName;
+  let kr_option = "--do_parallel" in (*""*)
+  let cmd = P.sprintf "python klee_reader.py %s %s" ast.fileName kr_option in 
+  exec_cmd cmd ;
+
+  
+  E.log "*** Bug Fixing .. done ***\n"
 
 
 
 (********************** Prototype **********************)
 
-let main () = begin
+let () = begin
 
   let filename = ref "" in
+  let inputs   = ref "" in
+  let outputs  = ref "" in 
+
   let do_faultloc = ref false in
+  let do_bugfix = ref false in
 
   let argDescr = [
     "--do_faultloc", Arg.Set do_faultloc, "do fault localization";
+    "--do_bugfix", Arg.Set do_bugfix, "do bugfix";
   ] in
+
+  let usage = "usage: tf [src inputs outputs]\n" in
 
   let handleArg s =
     if !filename = "" then filename := s
-    else raise (Arg.Bad "unexpected multiple input files")
+    else if !inputs = "" then inputs := s
+    else if !outputs = "" then outputs := s
+    else raise (Arg.Bad "too many input args")
   in
 
-  Arg.parse (Arg.align argDescr) handleArg "usage: tf [file.c]\n";
+  Arg.parse (Arg.align argDescr) handleArg usage;
 
-  let filename = !filename in 
-  assert (Sys.file_exists filename);
+  let tdir, filename, inputs, outputs = initialize_files !filename !inputs !outputs in
+  at_exit (fun () -> cleanup tdir);
 
-  E.log "*** Read testcases for program '%s'\n" filename ;
-  let tcs = get_tcs filename in
-  let goods, bads = init_check filename tcs in
 
+  let tcs = get_tcs filename inputs outputs in
+  let goods, bads = checkInit filename tcs in
 
   initCIL();
   (*
@@ -754,47 +960,28 @@ let main () = begin
 
   *)
   let ast = Frontc.parse filename () in 
+  initialize_ast ast;
+
+  let ssids:sscore list = 
+    if !do_faultloc then fault_loc ast goods bads else [(1,1.0)] 
+  in
   
-  (*** Initalize: assigning id's to stmts ***)
-  initialize ast;
-  (* visitCilFileSameGlobals ((new printStmtVisitor) None) ast; *)
-
-
-  (*Fault Localization part -- optional*)
-  let ssids:sscore list = if !do_faultloc then fault_loc ast goods bads else [(5,1.0)] in
   assert (L.length ssids > 0);
 
+  E.log "Suspicious scores for %d stmt\n" (L.length ssids);
+  L.iter (
+    fun (sid,score) -> 
+      E.log "sid %d -> score %g\n%a\n" sid score d_stmt (H.find sid_stmt_ht sid)
+  )ssids;
+  
     
   (*Bug Fixing part*)
-  let sfname = "mainQ" in
-  let ssid = fst (L.hd ssids) in
-  let fd = ref None in
+  if !do_bugfix then bug_fix ast ssids tcs; 
 
-  E.log "*** Get info on suspicious fun '%s' and sid %d\n" sfname ssid;
-  ignore(visitCilFileSameGlobals ((new spyFunVisitor) sfname fd) ast);
-  (*from fd figure out args type of mainQ then do the conversion for tcs*)
-  let fd = forceOption !fd in
-
-
-  E.log "*** Transform file '%s' wrt fun '%s', sid '%d' with %d tcs\n"
-    ast.fileName sfname ssid (L.length tcs);
-  transform ast sfname ssid fd tcs;
-
-  
-
-
-  (* (\* ignore(Cfg.computeFileCFG ast); *\) *)
-
-
-  (* let ssid = 1 in *)
-
-
-  E.log "*** done"
 
 end
 
 
-let () = main ()
 
 
 (*Questions:
@@ -868,4 +1055,6 @@ transform
 
 run klee on transformed files
 
+
 *)
+
