@@ -52,6 +52,14 @@ let write_file_bin (filename:string) content: unit =
   close_out fout;
   E.log "write_file_bin: \"%s\"\n" filename
 
+let read_file_bin (filename:string) =
+  let fin = open_in_bin filename in
+  let content = Marshal.from_channel fin in
+  close_in fin;
+  E.log "read_file: \"%s\"\n" filename;
+  content
+
+
 let write_src ?(use_stdout=false) (filename:string) (ast:file): unit = 
   let df oc =  dumpFile defaultCilPrinter oc filename ast in
   if use_stdout then df stdout else (
@@ -63,9 +71,7 @@ let write_src ?(use_stdout=false) (filename:string) (ast:file): unit =
 
 (*check if s1 is a substring of s2*)
 let in_str s1 s2 = 
-  try
-    ignore(Str.search_forward (Str.regexp_string s1) s2 0);
-    true
+  try ignore(Str.search_forward (Str.regexp_string s1) s2 0); true
   with Not_found -> false
 
 let rec take n = function 
@@ -85,10 +91,19 @@ let assertFileExist filename =
     E.log "'%s' does not exist\n" filename; exit 1
   )
 
-
 (*create a temp dir*)
-let mk_tmp_dir dprefix dsuffix = 
-  let td = Filename.temp_file dprefix dsuffix in
+let mk_tmp_dir ?(use_time=true) ?(temp_dir="") dprefix dsuffix = 
+  let dprefix = if use_time 
+    then P.sprintf "%s_%d" dprefix  (int_of_float (Unix.time())) 
+    else dprefix 
+  in 
+  let dprefix = dprefix ^ "_" in 
+
+  let td = 
+    if temp_dir = "" then Filename.temp_file dprefix dsuffix 
+    else Filename.temp_file ~temp_dir:temp_dir dprefix dsuffix
+  in
+      
   Unix.unlink td;
   Unix.mkdir td 0o755;
   td
@@ -132,7 +147,7 @@ let exp_of_vi (vi:varinfo): exp = Lval (var vi)
 let get_names:(varinfo list -> string list) = L.map (fun vi -> vi.vname)
 
 (*gcc filename.c;  return "filename.exe" if success else None*)
-let compile (src:string): string option = 
+let compile (src:string): string = 
   let gcc = "gcc" in 
   let ldflags = "" in 
   let exe = src ^ ".exe" in 
@@ -142,9 +157,8 @@ let compile (src:string): string option =
     
   E.log "cmd '%s'\n" cmd ;
 
-  match Unix.system cmd with 
-  |Unix.WEXITED(0) -> Some exe
-  |_ -> (E.log "cannot compile '%s'\n" src; None)
+  exec_cmd cmd ;
+  exe
 
 
 (*returns a list of lines from an ascii file*)
@@ -345,7 +359,7 @@ let initialize_ast (ast:file) =
 
 
 let initialize_files filename inputs outputs = 
-  let tdir = mk_tmp_dir "cece_" "_tdir"  in  
+  let tdir = mk_tmp_dir "cece" "" in
 
   let ck_cp fn = 
     assertFileExist fn;
@@ -393,9 +407,9 @@ let run_testscript (testscript:string) (prog:string) (prog_output:string) =
 
 
 let mk_run_testscript testscript prog prog_output tcs = 
-  if Sys.file_exists testscript then E.log "script '%s' exists .. skipped\n" testscript
-  else mk_testscript testscript tcs;
 
+  assert (not (Sys.file_exists testscript));
+  mk_testscript testscript tcs;
   run_testscript testscript prog prog_output
     
     
@@ -420,8 +434,7 @@ let checkInit (filename:string) (tcs:(int list * int) list)  =
   E.log "*** Init Check ***\n";
 
   (*compile and run program on tcs*)
-  let prog:string option = compile filename in
-  let prog:string = forceOption prog in
+  let prog:string = compile filename in
 
   let testscript =  filename ^ ".sh" in
   let prog_output:string = filename ^ ".routputs" in
@@ -483,7 +496,7 @@ class coverageVisitor = object
 end
 
 
-let coverage (ast:file) (filename:string) (filename_cov:string) = 
+let coverage (ast:file) (filename_cov:string) (filename_path:string) = 
 
   E.log "*** Creating coverage info ***\n";
 
@@ -497,7 +510,7 @@ let coverage (ast:file) (filename:string) (filename_cov:string) =
   ast.globals <- new_global :: ast.globals;
 
   let lhs = var(stderr_va) in
-  let arg1 = Const(CStr(filename ^ ".path" )) in
+  let arg1 = Const(CStr(filename_path)) in
   let arg2 = Const(CStr("ab")) in
   let instr = mk_call ~av:(Some lhs) "fopen" [arg1; arg2] in
   let new_s = mkStmt (Instr[instr]) in 
@@ -512,13 +525,13 @@ let coverage (ast:file) (filename:string) (filename_cov:string) =
 
 (******** Tarantula Fault Loc ********)
 (* Analyze execution path *)    
-let analyze_path (file_path:string): int * (int,int) H.t= 
+let analyze_path (filename:string): int * (int,int) H.t= 
 
-  E.log "Analyze '%s'\n" file_path;
+  E.log "** Analyze execution path '%s'\n" filename;
   let tc_ctr = ref 0 in
   let ht_stat = H.create 1024 in 
   let mem = H.create 1024 in 
-  let lines = read_lines file_path in 
+  let lines = read_lines filename in 
   L.iter(fun line -> 
     let sid = int_of_string line in 
     if sid = 0 then (
@@ -578,36 +591,43 @@ let tarantula (n_g:int) (ht_g:(int,int) H.t) (n_b:int) (ht_b:(int,int) H.t) : ss
   rs
 
 
-
 let fault_loc (ast:file) (goods:testsuite) (bads:testsuite): sscore list = 
   E.log "*** Fault Localization ***\n";
 
   assert (L.length goods > 0) ;
-  assert (L.length bads > 0) ;
+  assert (L.length bads  > 0) ;
+
+
+  let tdir = mk_tmp_dir 
+    ~use_time:false ~temp_dir:(Filename.dirname ast.fileName) "fautloc" "" in
+
+  E.log "faultloc temp dir '%s'\n" tdir;
+
+  let ast_bn =  P.sprintf "%s/%s" tdir (Filename.basename ast.fileName) in
 
   (*create cov file*)
-  let ast_cov = copy_obj ast in
-  let fileName_cov = ast.fileName ^ ".cov.c"  in
-  coverage ast_cov ast.fileName fileName_cov;
+  let fileName_cov = ast_bn ^ ".cov.c"  in
+  let fileName_path = ast_bn ^ ".path"  in
+  coverage (copy_obj ast) fileName_cov fileName_path;
 
   (*compile cov file*)
-  let prog:string option = compile fileName_cov in
-  let prog:string = forceOption prog in
-  
+  let prog:string = compile fileName_cov in
+
   (*run prog to obtain good/bad paths*)
-  let path_generic = ast.fileName ^ ".path" in
-  let path_g = ast.fileName ^ ".gpath" in
-  let path_b = ast.fileName ^ ".bpath" in
+  let path_generic = ast_bn ^ ".path" in
+  let path_g = ast_bn ^ ".gpath" in
+  let path_b = ast_bn ^ ".bpath" in
 
   (*good path*)
-  mk_run_testscript (ast.fileName ^ ".g.sh") prog 
-    (ast.fileName ^ ".outputs_g_dontcare") goods;
+  mk_run_testscript (ast_bn ^ ".g.sh") prog 
+    (ast_bn ^ ".outputs_g_dontcare") goods;
   Unix.rename path_generic path_g;
   
   (*bad path*)
-  mk_run_testscript (ast.fileName ^ ".b.sh") prog 
-    (ast.fileName ^ ".outputs_bad_dontcare") bads;
+  mk_run_testscript (ast_bn ^ ".b.sh") prog 
+    (ast_bn ^ ".outputs_bad_dontcare") bads;
   Unix.rename path_generic path_b;
+
 
   let n_g, ht_g = analyze_path path_g in
   let n_b, ht_b = analyze_path path_b in
@@ -809,9 +829,20 @@ class instrCallVisitor (uks:varinfo list) (funs_ht:(string,unit) H.t)= object(se
 end
 
  
+type file_t =   FT of file         | FTS of string
+type fundec_t = FD of fundec       | FDS of string
+type cvs_t =    VL of varinfo list | VLS of string
+type testsuite_t =    TS of testsuite    | TSS of string
+
 (*transform main/mainQ functions in ast wrt to given variables cvs*)
-let transform_file ast (mainQ_fd:fundec) (cid:int) (ssid:sid_t) 
-    (cvs:varinfo list) (tcs:testsuite) = 
+let transform_file (ast:file_t) (mainQ_fd:fundec_t) (cid:int) (ssid:sid_t) 
+    (cvs:cvs_t) (tcs:testsuite_t) = 
+
+  let ast = match ast with |FT f -> f |FTS s -> read_file_bin s in
+  let mainQ_fd = match mainQ_fd with  |FD f -> f |FDS s -> read_file_bin s in
+  let cvs = match cvs with |VL f -> f |VLS s -> read_file_bin s  in
+  let tcs = match tcs with |TS f -> f |TSS s -> read_file_bin s in
+
 
   E.log "** comb %d. |vs|=%d [%s]\n" 
     cid (L.length cvs) (String.concat ", " (get_names cvs));
@@ -885,8 +916,15 @@ let transform (ast:file) (ssid:int) (tcs:testsuite) =
   let cvss = [[]]@cvss in
   E.log "total combs %d\n" (L.length cvss);
   
+  (* Do things in parallel *)
+
+  (*Sequential version*)
   L.iter2 (fun cid cvs -> 
-    transform_file (copy_obj ast) mainQ_fd cid ssid cvs tcs) 
+    transform_file 
+      (FT (copy_obj ast)) 
+      (FD mainQ_fd)
+      cid ssid 
+      (VL cvs) (TS tcs)) 
     (range (L.length cvss)) cvss 
   
   
