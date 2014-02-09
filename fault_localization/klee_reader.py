@@ -4,10 +4,68 @@ import os
 import sys
 import shutil
 
+def instrument_worker(src, sid, do_savetemps):
+    #./tf /tmp/cece_1391897182_68074b/p.bug2.c --do_instrument_ssid 2
 
+    msg = 'Python: *** instrument {} wrt sid {} ***'.format(src,sid)
+    print msg 
 
-def read_klee (src, do_savetemps):
-    print "*** processing {} ***\n".format(src)
+    cmd = "./tf {} --do_instrument_ssid {}".format(src,sid)
+    print "$ {}".format(cmd)
+    proc = sp.Popen(cmd,shell=True,stdin=sp.PIPE,stdout=sp.PIPE,stderr=sp.PIPE)
+    rs,rs_err = proc.communicate()
+
+    print rs_err, msg + ".. done"
+
+    assert not rs, rs
+    if "error" in rs_err:
+        print 'instrument error'
+        print cmd
+        print rs_err
+        return None
+
+    return "done instrumenting with {}".format(sid)
+    
+
+def instrument(src, ssids, do_savetemps, do_parallel):
+
+    print "Processing {} files (parallel: {})".format(len(ssids),do_parallel)
+
+    def wprocess(tasks,Q):
+        rs = [(sid,instrument_worker(src,sid,do_savetemps)) for sid in tasks]
+        if Q is None: #no multiprocessing
+            return rs
+        else:
+            Q.put(rs)
+
+    tasks = ssids
+
+    if do_parallel:
+        from vu_common import get_workloads
+        from multiprocessing import (Process, Queue,
+                                     current_process, cpu_count)
+        Q = Queue()
+        workloads = get_workloads(tasks,max_nprocesses=cpu_count(),chunksiz=1)
+
+        print "workloads 'instrument ssid' {}: {}".format(len(workloads),map(len,workloads))
+        workers = [Process(target=wprocess,args=(wl,Q)) for wl in workloads]
+
+        for w in workers: w.start()
+        wrs = []
+        for _ in workers: wrs.extend(Q.get())
+
+    else:
+        wrs = wprocess(tasks,Q=None)
+        
+    wrs = [(sid,r) for (sid,r) in wrs if r]
+    print "SUMMARY: For '{}', instrument {} files / {} total (parallel: {})".format(src,len(wrs),len(tasks),do_parallel)
+
+    for i,(sid,r) in enumerate(wrs):
+        print "{}. sid {}: {}".format(i,sid,r)
+
+def read_klee_worker (src, do_savetemps):
+    print "Python: *** processing {} ***\n".format(src)
+
     #compile file with llvm
     include_path = "/home/Storage/Src/Devel/KLEE/klee/include"
     opts =  "--optimize -emit-llvm -c"
@@ -66,7 +124,7 @@ def read_klee (src, do_savetemps):
     return None
         
 
-def do_it(src,do_savetemps,do_parallel):
+def read_klee(src, do_savetemps, do_parallel):
     file_ = os.path.basename(src)
     dir_ = os.path.dirname(src)
 
@@ -76,10 +134,10 @@ def do_it(src,do_savetemps,do_parallel):
 
     files = sorted(files)
     #Iterate over all file with .tf.c extension
-    print "Processing {} files".format(len(files))
+    print "Processing {} files (parallel: {})".format(len(files),do_parallel)
 
     def wprocess(tasks,Q):
-        rs = [(f,read_klee(f,do_savetemps)) for f in tasks]
+        rs = [(f,read_klee_worker(f,do_savetemps)) for f in tasks]
         if Q is None: #no multiprocessing
             return rs
         else:
@@ -106,9 +164,9 @@ def do_it(src,do_savetemps,do_parallel):
     #rs = [(f,read_klee(f,do_savetemps)) for f in files]
 
     wrs = [(f,r) for (f,r) in wrs if r]
-    print 'Found {} results'.format(len(wrs))
+    print "SUMMARY: For '{}', found {} fixes/ {} total (parallel: {})".format(src,len(wrs),len(tasks),do_parallel)
     for i,(f,r) in enumerate(wrs):
-        print "{}.{}: {}".format(i,f, r)
+        print "{}.{}: {}".format(i, f, r)
         
 
 if __name__ == "__main__":
@@ -125,13 +183,30 @@ if __name__ == "__main__":
                          help="use multiprocessing",
                          action="store_true")
 
+    aparser.add_argument("--do_instrument",
+                         help='instrument ssids, e.g., --do_ instrument "1 3 7 9"',
+                         dest='ssids',
+                         action="store")
+
     args = aparser.parse_args()
-    do_it(args.file,do_savetemps = args.do_savetemps, do_parallel=args.do_parallel)
+
+    ssids = args.ssids
+    if ssids:
+        ssids = [int(sid) for sid in ssids.split()]
+        print ssids
+        instrument(args.file, ssids, 
+                   do_savetemps=args.do_savetemps, 
+                   do_parallel=args.do_parallel)
+    else:
+        read_klee(args.file,
+                  do_savetemps = args.do_savetemps, 
+                  do_parallel=args.do_parallel)
 
              
                          
 
 
+# time python klee_reader.py /tmp/cece_1391898175_e46d2a/p.c --do_instrument "1 2" --do_paralle
 
 
 

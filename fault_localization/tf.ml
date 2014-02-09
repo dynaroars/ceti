@@ -59,7 +59,6 @@ let read_file_bin (filename:string) =
   E.log "read_file: \"%s\"\n" filename;
   content
 
-
 let write_src ?(use_stdout=false) (filename:string) (ast:file): unit = 
   let df oc =  dumpFile defaultCilPrinter oc filename ast in
   if use_stdout then df stdout else (
@@ -85,11 +84,6 @@ let rec take n = function
 let rec range ?(a=0) b = if a >= b then [] else a::range ~a:(succ a) b 
 let copy_obj (x : 'a) = 
   let s = Marshal.to_string x [] in (Marshal.from_string s 0 : 'a)
-
-let assertFileExist filename = 
-  if not (Sys.file_exists filename) then (
-    E.log "'%s' does not exist\n" filename; exit 1
-  )
 
 (*create a temp dir*)
 let mk_tmp_dir ?(use_time=true) ?(temp_dir="") dprefix dsuffix = 
@@ -131,7 +125,6 @@ let boolTyp:typ = intType
 type inp_t = int list 
 type outp_t = int 
 type testcase = inp_t * outp_t
-type testsuite = testcase list
 type sid_t = int
   
 (******************* Helper Functions *******************)
@@ -210,7 +203,7 @@ let string_of_tc (tc:int list * int) : string =
   let outp = string_of_int outp in 
   "([" ^ inp ^ "]" ^ ", " ^ outp ^ "]"
 
-let string_of_tcs (tcs:testsuite) :string = 
+let string_of_tcs (tcs:testcase list) :string = 
   let tcs = L.map string_of_tc tcs in 
   let tcs = String.concat "; " tcs in
   "["^ tcs ^ "]"
@@ -224,7 +217,6 @@ let get_tcs (filename:string) (inputs:string) (outputs:string): (int list * int)
   let outputs = read_lines outputs in 
   assert (L.length inputs = L.length outputs);
 
-  
   let tcs = 
     L.fold_left2 (fun acc inp outp ->
       let inp = Str.split (Str.regexp "[ \t]+")  inp in
@@ -314,9 +306,7 @@ class everyVisitor = object
 end
 
 
-let sid_stmt_ht:(int,stmt) H.t = H.create 1024
-let ctr = ref 1
-let get_next_ct ct = let ct' = !ct in incr ct;  ct'
+
 
 (* List of stmts that can be modified *)
 let can_modify:stmtkind->bool = function 
@@ -324,15 +314,19 @@ let can_modify:stmtkind->bool = function
   |_ -> false
 
 (* Walks over AST and builds a hashtable that maps ints to stmts *)
-class numVisitor = object
+class numVisitor ht = object
   inherit nopCilVisitor
+    
+  val mutable mctr = 1
+  method get_mctr () = mctr
+
   method vblock b = 
     let action (b: block) : block= 
       let change_sid (s: stmt) : unit = 
 	if can_modify s.skind then (
-	  let ct = get_next_ct ctr in
-	  H.add sid_stmt_ht ct s;
-	  s.sid <- ct
+	  H.add ht mctr s;
+	  s.sid <- mctr;
+	  mctr <- succ mctr
 	)
 	else s.sid <- 0;  (*Anything not considered has sid 0 *)
       in 
@@ -340,20 +334,20 @@ class numVisitor = object
       b
     in 
     ChangeDoChildrenPost(b, action)
+
+
 end
 
 
-let initialize_ast (ast:file) = 
+let initialize_ast (ast:file) (sid_stmt_ht:(int,stmt) H.t)= 
   E.log "*** Initializing (assigning id's to stmts)***\n";
  
   visitCilFileSameGlobals (new everyVisitor) ast;
   visitCilFileSameGlobals (new breakCondVisitor) ast;
 
-  visitCilFileSameGlobals (new numVisitor) ast;
-
-  write_file_bin (ast.fileName ^ ".ht")  (!ctr-1, sid_stmt_ht);
-  write_file_bin (ast.fileName ^ ".ast") ast;
-  write_src (ast.fileName ^ ".ast.c") ast;
+  let nv = (new numVisitor) sid_stmt_ht in 
+  visitCilFileSameGlobals (nv:> cilVisitor) ast;
+  assert (pred (nv#get_mctr()) = H.length sid_stmt_ht);
 
   E.log "*** Initializing .. done ***\n"
 
@@ -361,16 +355,15 @@ let initialize_ast (ast:file) =
 let initialize_files filename inputs outputs = 
   let tdir = mk_tmp_dir "cece" "" in
 
-  let ck_cp fn = 
-    assertFileExist fn;
+  let ck_cp fn msg = 
     let fn' = P.sprintf "%s/%s" tdir (Filename.basename fn) in 
     exec_cmd (P.sprintf "cp %s %s" fn fn');
     fn'
   in
   
-  let filename = ck_cp filename in
-  let inputs = ck_cp inputs in
-  let outputs = ck_cp outputs in 
+  let filename = ck_cp filename "src" in
+  let inputs = ck_cp inputs "inputs" in
+  let outputs = ck_cp outputs "outputs" in 
   tdir,filename, inputs, outputs
 
 
@@ -414,7 +407,7 @@ let mk_run_testscript testscript prog prog_output tcs =
     
     
 (*partition tcs into 2 sets: good / bad*)
-let compare_outputs (prog_outputs:string) (tcs:testsuite) : testsuite * testsuite = 
+let compare_outputs (prog_outputs:string) (tcs:testcase list) : testcase list * testcase list = 
   let prog_outputs = read_lines prog_outputs in 
   assert (L.length prog_outputs == L.length tcs) ;
 
@@ -591,7 +584,7 @@ let tarantula (n_g:int) (ht_g:(int,int) H.t) (n_b:int) (ht_b:(int,int) H.t) : ss
   rs
 
 
-let fault_loc (ast:file) (goods:testsuite) (bads:testsuite): sscore list = 
+let fault_loc (ast:file) (goods:testcase list) (bads:testcase list): sscore list = 
   E.log "*** Fault Localization ***\n";
 
   assert (L.length goods > 0) ;
@@ -634,8 +627,8 @@ let fault_loc (ast:file) (goods:testsuite) (bads:testsuite): sscore list =
   let sscores = tarantula n_g ht_g n_b ht_b in
 
   E.log "*** Fault Localization .. done ***\n";
-
   sscores
+
 
 (******************* Transforming File *******************)
 (*declare and set constraints on uk:
@@ -723,7 +716,7 @@ let mk_goal (exps:exp list) (uks_exps:exp list):stmtkind =
 
 
 (*Instrument main function*)
-let mk_main (main_fd:fundec) (mainQ_fd:fundec) (n_uks:int) (tcs:testsuite)
+let mk_main (main_fd:fundec) (mainQ_fd:fundec) (n_uks:int) (tcs:testcase list)
     : (varinfo list * stmt list) =
   let uks, instrs1 = L.split(L.map (mk_uk main_fd) (range n_uks)) in 
   let (uks_vi:varinfo list), (uks_lv: lval list) = L.split uks in 
@@ -750,7 +743,7 @@ let mk_main (main_fd:fundec) (mainQ_fd:fundec) (n_uks:int) (tcs:testsuite)
   uks_vi, [mkStmt instrs_skind; mkStmt if_skind]
    
 
-class mainVisitor  (mainQ_fd:fundec) (n_uks:int) (tcs:testsuite) (uks:varinfo list ref)= object
+class mainVisitor  (mainQ_fd:fundec) (n_uks:int) (tcs:testcase list) (uks:varinfo list ref)= object
   inherit nopCilVisitor
   method vfunc fd =
     let action(fd:fundec) : fundec =
@@ -830,29 +823,21 @@ end
 
  
 type file_t =   FT of file         | FTS of string
-type fundec_t = FD of fundec       | FDS of string
-type cvs_t =    VL of varinfo list | VLS of string
-type testsuite_t =    TS of testsuite    | TSS of string
+type testcase_list_t =    TS of testcase list    | TSS of string
 
 (*transform main/mainQ functions in ast wrt to given variables cvs*)
-let transform_file (ast:file_t) (mainQ_fd:fundec_t) (cid:int) (ssid:sid_t) 
-    (cvs:cvs_t) (tcs:testsuite_t) = 
-
-  let ast = match ast with |FT f -> f |FTS s -> read_file_bin s in
-  let mainQ_fd = match mainQ_fd with  |FD f -> f |FDS s -> read_file_bin s in
-  let cvs = match cvs with |VL f -> f |VLS s -> read_file_bin s  in
-  let tcs = match tcs with |TS f -> f |TSS s -> read_file_bin s in
-
-
-  E.log "** comb %d. |vs|=%d [%s]\n" 
-    cid (L.length cvs) (String.concat ", " (get_names cvs));
+let transform_cvs (ast:file) (mainQ_fd:fundec) 
+    (tcs:testcase list) (cid:int) (ssid:sid_t) (cvs:varinfo list)  = 
     
-  let n_uks = succ (L.length cvs) in 
-  let (uks:varinfo list ref) = ref [] in 
+  E.log "** comb %d. |vs|=%d [%s]\n" cid (L.length cvs) 
+    (String.concat ", " (get_names cvs));
+
+  let n_uks = succ (L.length cvs) in
+  let (uks:varinfo list ref) = ref [] in
   
   (*instr main*)
   visitCilFileSameGlobals ((new mainVisitor) mainQ_fd n_uks tcs uks) ast;
-  let uks = !uks in 
+  let uks = !uks in
   assert (L.length uks = n_uks) ;
 
   (*modify suspStmt: stay with this order, mod sstmt first before doing others*)
@@ -861,7 +846,7 @@ let transform_file (ast:file_t) (mainQ_fd:fundec_t) (cid:int) (ssid:sid_t)
   assert (!modified);
 
   (*add uk's to fun decls and fun calls*)
-  let funs_ht = H.create 1024 in 
+  let funs_ht = H.create 1024 in
   visitCilFileSameGlobals ((new funInstrVisitor) uks funs_ht) ast;
   visitCilFileSameGlobals ((new instrCallVisitor) uks funs_ht) ast;
 
@@ -869,13 +854,13 @@ let transform_file (ast:file_t) (mainQ_fd:fundec_t) (cid:int) (ssid:sid_t)
   ast.globals <- (GText "#include \"klee/klee.h\"") :: ast.globals;
   
   write_src (P.sprintf "%s.s%d.c%d.tf.c" ast.fileName ssid cid) ast
-    
-
-let transform (ast:file) (ssid:int) (tcs:testsuite) = 
+        
+(*transform main/mainQ functions in ast wrt to given suspicious statement*)
+let transform_sid (ast:file) (tcs:testcase list) (ssid:sid_t) = 
 
   E.log "** Transform file '%s' wrt sid '%d' with %d tcs\n"
     ast.fileName ssid (L.length tcs);
-  E.log "%a\n" d_stmt (H.find sid_stmt_ht ssid);
+  (*E.log "%a\n" d_stmt (H.find sid_stmt_ht ssid);*)
 
   (*find mainQ*)
   let mainQ_fd = ref None in
@@ -910,45 +895,56 @@ let transform (ast:file) (ssid:int) (tcs:testsuite) =
 
   (*let n_uks = L.length vs in*)
   let n_uks = max_uks in
-  let cvss = 
+  let cvss:varinfo list list = 
     L.flatten(L.map(fun siz -> combinations siz vs) (range (n_uks + 1))) in 
 		
   let cvss = [[]]@cvss in
   E.log "total combs %d\n" (L.length cvss);
   
-  (* Do things in parallel *)
-
-  (*Sequential version*)
   L.iter2 (fun cid cvs -> 
-    transform_file 
-      (FT (copy_obj ast)) 
-      (FD mainQ_fd)
-      cid ssid 
-      (VL cvs) (TS tcs)) 
+    transform_cvs
+      (copy_obj ast) mainQ_fd tcs
+      cid ssid cvs)
     (range (L.length cvss)) cvss 
   
-  
 
-let bug_fix (ast:file) (ssids:sscore list) (tcs:testsuite)= 
-  E.log "*** Bug Fixing ***\n";  
+let transform (ast:file) (ssids:sid_t list) (tcs:testcase list) (do_parallel:bool) = 
+  assert (L.length ssids > 0);
 
+  E.log "*** Transform ***\n";  
   (*iterate through top n ssids*)
   let ssids = take top_n_ssids ssids in 
+    E.log "Apply transformation to %d ssids (parallel: %b) \n" 
+      (L.length ssids) do_parallel;
+  
+  
+  if do_parallel then (
+    let kr_option = if do_parallel then "--do_parallel" else "" in
+    let ssids' = String.concat " " (L.map string_of_int ssids) in
+    let cmd = P.sprintf "python klee_reader.py %s --do_instrument \"%s\" %s" 
+      ast.fileName ssids' kr_option in
+    exec_cmd cmd
+  ) 
+  else(
+    L.iter (fun (ssid:sid_t) -> transform_sid ast tcs ssid) ssids ;
+  );
 
-  E.log "Applying bug fix to %d ssids\n" (L.length ssids);
-  L.iter (fun (ssid:sscore) -> transform ast (fst ssid) tcs) ssids ;
+  E.log "*** Transform .. done ***\n"  
+
+
+let bug_fix (filename:string) (do_parallel:bool)= 
+  E.log "*** Bug Fix ***\n";  
 
   (*run klee on transformed files
     $time python klee_reader.py tests/p.c --do_parallel
   *)
-
-  E.log "Running Klee on transformed files from '%s'" ast.fileName;
-  let kr_option = "--do_parallel" in (*""*)
-  let cmd = P.sprintf "python klee_reader.py %s %s" ast.fileName kr_option in 
+  E.log "Running Klee on transformed files from '%s' (parallel: %b)\n" 
+    filename do_parallel;
+  let kr_option = if do_parallel then "--do_parallel" else "" in
+  let cmd = P.sprintf "python klee_reader.py %s %s" filename kr_option in 
   exec_cmd cmd ;
-
   
-  E.log "*** Bug Fixing .. done ***\n"
+  E.log "*** Bug Fix .. done ***\n"
 
 
 
@@ -961,11 +957,20 @@ let () = begin
   let outputs  = ref "" in 
 
   let do_faultloc = ref false in
+  let do_transform = ref false in
   let do_bugfix = ref false in
+
+  let do_instrument_ssid = ref (-1) in  (*only do transformation on ssids*)
+
+  let do_parallel = ref false in 
 
   let argDescr = [
     "--do_faultloc", Arg.Set do_faultloc, "do fault localization";
+    "--do_transform", Arg.Set do_transform, "do transform";
     "--do_bugfix", Arg.Set do_bugfix, "do bugfix";
+    "--do_parallel", Arg.Set do_parallel, "do parallel";
+
+    "--do_instrument_ssid", Arg.Set_int do_instrument_ssid, "X instrument ssid";
   ] in
 
   let usage = "usage: tf [src inputs outputs]\n" in
@@ -979,14 +984,24 @@ let () = begin
 
   Arg.parse (Arg.align argDescr) handleArg usage;
 
-  let tdir, filename, inputs, outputs = initialize_files !filename !inputs !outputs in
-  at_exit (fun () -> cleanup tdir);
-
-
-  let tcs = get_tcs filename inputs outputs in
-  let goods, bads = checkInit filename tcs in
-
   initCIL();
+
+  (*E.g., ./tf /tmp/cece_1391897485_3bed37/p.c --do_instrument_ssid 1 *)
+  if !do_instrument_ssid > -1 then (
+    let ssid = !do_instrument_ssid in 
+    assert (ssid > 0);
+
+    (*read in saved files*)
+    let ast = (!filename ^ ".ast") in
+    let tcs = (!filename ^ ".tcs") in 
+
+    let ast:file = read_file_bin ast in 
+    let tcs:testcase list = read_file_bin tcs in 
+    transform_sid ast tcs ssid ; 
+    exit 0
+  );
+
+  (*** some initialization, getting testcases etc***)
   (*
     Note: src (filename) must be preprocessed by cil by running 
     cilly src.c --save-temps; the result is called src.cil.c
@@ -995,27 +1010,37 @@ let () = begin
     void main(..) {
     printf(mainQ);...
     }
-
   *)
+
+  let tdir, filename, inputs, outputs = 
+    initialize_files !filename !inputs !outputs in
+  at_exit (fun () -> cleanup tdir);
+
+  let tcs = get_tcs filename inputs outputs in
+  let goods, bads = checkInit filename tcs in
+  
   let ast = Frontc.parse filename () in 
-  initialize_ast ast;
+  let sid_stmt_ht:(int,stmt) H.t = H.create 1024 in 
+  initialize_ast ast sid_stmt_ht;  (*modify ast, etc*)
 
-  let ssids:sscore list = 
-    if !do_faultloc then fault_loc ast goods bads else [(1,1.0)] 
+  write_file_bin (ast.fileName ^ ".ast") ast;
+  write_file_bin (ast.fileName ^ ".tcs") tcs;
+
+
+  (*** fault localization ***)
+  let sscores:sscore list = 
+    if !do_faultloc then fault_loc ast goods bads else [(1,1.)] 
   in
-  
-  assert (L.length ssids > 0);
 
-  E.log "Suspicious scores for %d stmt\n" (L.length ssids);
-  L.iter (
-    fun (sid,score) -> 
-      E.log "sid %d -> score %g\n%a\n" sid score d_stmt (H.find sid_stmt_ht sid)
-  )ssids;
-  
-    
-  (*Bug Fixing part*)
-  if !do_bugfix then bug_fix ast ssids tcs; 
+  E.log "Suspicious scores for %d stmt\n" (L.length sscores);
+  L.iter (fun (sid,score) -> 
+    E.log "sid %d -> score %g\n%a\n" sid score d_stmt (H.find sid_stmt_ht sid)
+  ) sscores;
 
+  let ssids:sid_t list = L.map fst sscores in   
+
+  if !do_transform then (transform ast ssids tcs !do_parallel);
+  if !do_bugfix then (bug_fix ast.fileName !do_parallel);
 
 end
 
