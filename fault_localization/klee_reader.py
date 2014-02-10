@@ -63,15 +63,16 @@ def instrument(src, ssids, do_savetemps, do_parallel):
     for i,(sid,r) in enumerate(wrs):
         print "{}. sid {}: {}".format(i,sid,r)
 
+#compile file then run klee on the resulting object file
 def read_klee_worker (src, do_savetemps):
-    print "Python: *** processing {} ***\n".format(src)
+    print "Python: *** processing {} ***".format(src)
 
     #compile file with llvm
     include_path = "/home/Storage/Src/Devel/KLEE/klee/include"
-    opts =  "--optimize -emit-llvm -c"
+    llvm_opts =  "--optimize -emit-llvm -c"
     obj = os.path.splitext(src)[0] + os.extsep + 'o'
     
-    cmd = "llvm-gcc -I {} {} {} -o {}".format(include_path,opts,src,obj)
+    cmd = "llvm-gcc -I {} {} {} -o {}".format(include_path,llvm_opts,src,obj)
     print "$ {}".format(cmd)
     proc = sp.Popen(cmd,shell=True,stdin=sp.PIPE,stdout=sp.PIPE,stderr=sp.PIPE)
     rs,rs_err = proc.communicate()
@@ -83,8 +84,11 @@ def read_klee_worker (src, do_savetemps):
         return None
     
 
-    #run klee and monitor output
-    cmd = "klee --allow-external-sym-calls {}".format(obj)
+    #run klee and monitor its output
+    klee_outdir = "{}-klee-out".format(obj)
+    klee_opts = " --allow-external-sym-calls -output-dir={}".format(klee_outdir)
+
+    cmd = "klee {} {}".format(klee_opts,obj)
     print "$ {}".format(cmd)
     proc = sp.Popen(cmd,shell=True,stdout=sp.PIPE, stderr=sp.STDOUT)
 
@@ -101,11 +105,6 @@ def read_klee_worker (src, do_savetemps):
 
 
     rs,rs_err = proc.communicate()
-
-    #clean up
-    if not do_savetemps:
-        print 'removing {}'.format(obj)
-        os.remove(obj)
 
 
     if rs_err: print 'rs_err:\n',rs_err
@@ -137,7 +136,7 @@ def read_klee(src, do_savetemps, do_parallel):
     print "Processing {} files (parallel: {})".format(len(files),do_parallel)
 
     def wprocess(tasks,Q):
-        rs = [(f,read_klee_worker(f,do_savetemps)) for f in tasks]
+        rs = [(f, read_klee_worker(f,do_savetemps)) for f in tasks]
         if Q is None: #no multiprocessing
             return rs
         else:
@@ -206,7 +205,7 @@ if __name__ == "__main__":
                          
 
 
-# time python klee_reader.py /tmp/cece_1391898175_e46d2a/p.c --do_instrument "1 2" --do_paralle
+# time python klee_reader.py /tmp/cece_1391898175_e46d2a/p.c --do_instrument "1 2" --do_parallel
 
 
 
