@@ -122,10 +122,18 @@ let top_n_ssids:int = 10
 
 let boolTyp:typ = intType
 
+(*filenames*)
+let ginfo_s = P.sprintf "%s.info"
+let vs_a_s = P.sprintf "%s.sid%d.arr" (*f.c.sid1.arr*)
+
+(*commands*)
+let gcc_cmd = P.sprintf "gcc %s -o %s >& /dev/null"
+
 type inp_t = int list 
 type outp_t = int 
 type testcase = inp_t * outp_t
 type sid_t = int
+type ginfo_t = file * fundec * testcase list (*ast,mainQ,tcs*)
   
 (******************* Helper Functions *******************)
 let mk_vi ?(ftype=TVoid []) fname: varinfo = makeVarinfo true fname ftype
@@ -141,15 +149,10 @@ let get_names:(varinfo list -> string list) = L.map (fun vi -> vi.vname)
 
 (*gcc filename.c;  return "filename.exe" if success else None*)
 let compile (src:string): string = 
-  let gcc = "gcc" in 
-  let ldflags = "" in 
   let exe = src ^ ".exe" in 
   (try Unix.unlink exe with _ -> () ) ; 
-
-  let cmd = P.sprintf "%s %s -o %s %s >& /dev/null" gcc src exe ldflags in
-    
+  let cmd = gcc_cmd src exe in
   E.log "cmd '%s'\n" cmd ;
-
   exec_cmd cmd ;
   exe
 
@@ -837,13 +840,10 @@ class instrCallVisitor (uks:varinfo list) (funs_ht:(string,unit) H.t)= object(se
 end
 
  
-type file_t =   FT of file         | FTS of string
-type testcase_list_t =    TS of testcase list    | TSS of string
-
 (*transform main/mainQ functions in ast wrt to given variables cvs*)
 
-let transform_cvs (ast:file) (mainQ:fundec) 
-    (tcs:testcase list) (cid:int) (ssid:sid_t) (cvs:varinfo list)  = 
+let transform_cvs (ast:file) (mainQ:fundec) (tcs:testcase list) 
+    (cid:int) (ssid:sid_t) (cvs:varinfo list)  = 
     
   E.log "** comb %d. |vs|=%d [%s]\n" cid (L.length cvs) 
     (String.concat ", " (get_names cvs));
@@ -872,7 +872,8 @@ let transform_cvs (ast:file) (mainQ:fundec)
   
   write_src (P.sprintf "%s.s%d.c%d.tf.c" ast.fileName ssid cid) ast
         
-(*transform main/mainQ functions in ast wrt to given suspicious statement*)
+(*transform main/mainQ functions in ast wrt to given suspicious statement
+  can be run in parallel *)
 let transform_sid (ast:file) (mainQ:fundec) (tcs:testcase list) (ssid:sid_t) = 
 
   E.log "** Transform file '%s' wrt sid '%d' with %d tcs\n"
@@ -936,73 +937,6 @@ let transform (ast:file) (mainQ:fundec) (ssids:sid_t list) (tcs:testcase list) (
   E.log "*** Transform .. done ***\n"  
 
 
-(****** WORKING CODE **********)
-
-(* let get_vs_sid (ast:file) (ssid:sid_t) =  *)
-
-(*   E.log "** Obtain vs info in scope of sid %d in file '%s'\n" *)
-(*     ssid ast.fileName ; *)
-(*   (\*E.log "%a\n" d_stmt (H.find sid_stmt_ht ssid);*\) *)
-
-(*   (\*find which function contains suspicious stmt id*\) *)
-(*   let sfd = fd_of_sid ast ssid in  *)
-
-(*   (\*obtain usuable variables from sfd*\) *)
-(*   let vs' = sfd.sformals@sfd.slocals in  *)
-
-(*   let vi_pred vi =  *)
-(*     vi.vtype = intType &&  *)
-(*     not (in_str "__cil_tmp" vi.vname) && *)
-(*     not (in_str "tmp___" vi.vname) *)
-(*   in *)
-
-(*   let vs = L.filter vi_pred vs' in *)
-
-(*   E.log "Using %d/%d avail vars in fun %s\n"  *)
-(*     (L.length vs) (L.length vs') sfd.svar.vname; *)
-(*   E.log "[%s]\n" (String.concat ", " (get_names vs)); *)
-
-(*   (\*let n_uks = L.length vs in*\) *)
-(*   let n_uks = max_uks in *)
-(*   let vss:varinfo list list =  *)
-(*     L.flatten(L.map(fun siz -> combinations siz vs) (range (n_uks + 1))) in  *)
-		
-(*   let vss = [[]]@vss in *)
-(*   E.log "total combs %d\n" (L.length vss); *)
-
-(*   sfd,vss *)
-
-    
-  
-
-
-(* let ttransform (ast:file) (mainQ:fundec) (ssids:sid_t list) (tcs:testcase list) (do_parallel:bool) =  *)
-(*   assert (L.length ssids > 0); *)
-
-(*   E.log "*** Transform ***\n";   *)
-
-(*   (\*iterate through top n ssids*\) *)
-(*   let ssids = take top_n_ssids ssids in  *)
-(*   E.log "Obtain vs info from %d ssids\n"  (L.length ssids); *)
-
-
-(*   (\*do transformation *\)   *)
-(*   if do_parallel then ( *)
-(*     let kr_option = if do_parallel then "--do_parallel" else "" in *)
-(*     let ssids' = String.concat " " (L.map string_of_int ssids) in *)
-(*     let cmd = P.sprintf "python klee_reader.py %s --do_instrument \"%s\" %s" *)
-(*       ast.fileName ssids' kr_option in *)
-(*     exec_cmd cmd *)
-(*   ) *)
-(*   else( *)
-(*     L.iter (fun (ssid:sid_t) -> transform_sid ast mainQ tcs ssid) ssids *)
-(*   ); *)
-
-(*   E.log "*** Transform .. done ***\n"   *)
-
-(* (\*WORKING CODE*\) *)
-
-
 let bug_fix (filename:string) (do_parallel:bool)= 
   E.log "*** Bug Fix ***\n";  
 
@@ -1063,14 +997,14 @@ let () = begin
     let ssid = !do_instrument_ssid in 
     assert (ssid > 0);
 
-    (*read in saved files*)
-    let ast:file = read_file_bin (!filename ^ ".ast") in 
-    let tcs:testcase list = read_file_bin  (!filename ^ ".tcs") in 
-    let mainQ:fundec = read_file_bin (!filename ^ ".mainQ") in 
+    (*read in saved info*)
+    let (ast:file),(mainQ:fundec),(tcs:testcase list) = 
+      read_file_bin (ginfo_s !filename) in
 
-    transform_sid ast mainQ tcs ssid ; 
+    transform_sid ast mainQ tcs ssid ;
     exit 0
   );
+
 
   (*** some initialization, getting testcases etc***)
   (*
@@ -1094,9 +1028,7 @@ let () = begin
   let sid_stmt_ht:(int,stmt) H.t = H.create 1024 in 
   let mainQ = initialize_ast ast sid_stmt_ht in  (*modify ast, etc*)
 
-  write_file_bin (ast.fileName ^ ".ast") ast;
-  write_file_bin (ast.fileName ^ ".tcs") tcs;
-  write_file_bin (ast.fileName ^ ".mainQ") mainQ;
+  write_file_bin (ginfo_s ast.fileName) (ast,mainQ,tcs);
 
   (*** fault localization ***)
   let sscores:sscore list = 
