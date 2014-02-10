@@ -118,7 +118,6 @@ let uk_min :int = -1
 let uk_max :int =  1
 
 let min_sscore:float = 0.5
-let max_uks:int = 2 
 let top_n_ssids:int = 10
 
 let boolTyp:typ = intType
@@ -876,71 +875,7 @@ let transform_cvs (ast:file) (mainQ:fundec)
   
   write_src (transform_s ast.fileName ssid xinfo) ast
         
-(*transform main/mainQ functions in ast wrt to given suspicious statement*)
-let transform_sid (ast:file) (mainQ:fundec) (tcs:testcase list) (ssid:sid_t) = 
 
-  E.log "** Transform file '%s' wrt sid '%d' with %d tcs\n"
-    ast.fileName ssid (L.length tcs);
-  (*E.log "%a\n" d_stmt (H.find sid_stmt_ht ssid);*)
-
-  
-  (*find which function contains suspicious stmt id*)
-  let s_fd = fd_of_sid ast ssid in 
-
-  (*obtain usuable variables from s_fd*)
-  let vs' = s_fd.sformals@s_fd.slocals in 
-
-  let vi_pred vi = 
-    vi.vtype = intType && 
-    not (in_str "__cil_tmp" vi.vname) &&
-    not (in_str "tmp___" vi.vname)
-  in
-
-  let vs = L.filter vi_pred vs' in
-
-  E.log "Using %d/%d avail vars in fun %s\n" 
-    (L.length vs) (L.length vs') s_fd.svar.vname;
-  E.log "[%s]\n" (String.concat ", " (get_names vs));
-
-  (*let n_uks = L.length vs in*)
-  let n_uks = max_uks in
-  let cvss:varinfo list list = 
-    L.flatten(L.map(fun siz -> combinations siz vs) (range (n_uks + 1))) in 
-		
-  let cvss = [[]]@cvss in
-  E.log "total combs %d\n" (L.length cvss);
-  
-  L.iter2 (fun cid cvs -> 
-    transform_cvs
-      (copy_obj ast) mainQ tcs
-      (P.sprintf "z%d_c%d" (L.length cvs) cid) ssid cvs)
-    (range (L.length cvss)) cvss 
-
-
-let transform (ast:file) (mainQ:fundec) (ssids:sid_t list) (tcs:testcase list) (do_parallel:bool) = 
-  assert (L.length ssids > 0);
-
-  E.log "*** Transform ***\n";  
-  (*iterate through top n ssids*)
-  let ssids = take top_n_ssids ssids in 
-    E.log "Apply transformation to %d ssids (parallel: %b) \n" 
-      (L.length ssids) do_parallel;
-  
-  if do_parallel then (
-    let kr_option = if do_parallel then "--do_parallel" else "" in
-    let ssids' = String.concat " " (L.map string_of_int ssids) in
-    let cmd = P.sprintf "python klee_reader.py %s --do_instrument \"%s\" %s"
-      ast.fileName ssids' kr_option in
-    exec_cmd cmd
-  )
-  else(
-    L.iter (fun (ssid:sid_t) -> transform_sid ast mainQ tcs ssid) ssids
-  );
-
-  E.log "*** Transform .. done ***\n"  
-
-
-(****** WORKING CODE **********)
 let spy_sid (ast:file) (ssid:sid_t): varinfo array =
 
   E.log "** Obtain vs info in scope of sid %d in file '%s'\n"
@@ -993,7 +928,6 @@ let tbf (ast:file) (mainQ:fundec) (ssids:sid_t list) (tcs:testcase list) (do_par
 
   E.log "*** Transform .. done ***\n"
 
-(* (\*WORKING CODE*\) *)
 
 
 let bug_fix (filename:string) (do_parallel:bool)= 
@@ -1025,8 +959,6 @@ let () = begin
   let do_transform = ref false in
   let do_bugfix = ref false in
 
-  let do_instrument_ssid = ref (-1) in  (*only do transformation on ssids*)
-
 
   let do_ssid = ref (-1) in  (*only do transformation on vs_idxs*)
   let xinfo = ref "" in  (*helpful info for debuggin*)
@@ -1040,7 +972,6 @@ let () = begin
     "--do_bugfix", Arg.Set do_bugfix, "do bugfix";
     "--do_parallel", Arg.Set do_parallel, "do parallel";
 
-    "--do_instrument_ssid", Arg.Set_int do_instrument_ssid, "S instrument ssid";
     "--do_ssid", Arg.Set_int do_ssid, "X ssid";
     "--xinfo", Arg.Set_string xinfo, "S xinfo";
     "--idxs", Arg.Set_string idxs, "S idxs";
@@ -1058,20 +989,6 @@ let () = begin
   Arg.parse (Arg.align argDescr) handleArg usage;
 
   initCIL();
-
-  (*E.g., ./tf /tmp/cece_1391897485_3bed37/p.c --do_instrument_ssid 1 *)
-  if !do_instrument_ssid > -1 then (
-    let ssid = !do_instrument_ssid in 
-    assert (ssid > 0);
-
-    (*read in saved info*)
-    let (ast:file),(mainQ:fundec),(tcs:testcase list) = 
-      read_file_bin (ginfo_s !filename) in
-
-    transform_sid ast mainQ tcs ssid ;
-    exit 0
-  );
-
 
   if !do_ssid > -1 then (
     let ssid   = !do_ssid in
@@ -1132,7 +1049,6 @@ let () = begin
 
   if !do_transform then (
     tbf ast mainQ ssids tcs !do_parallel
-    (*transform ast mainQ ssids tcs !do_parallel*)
   );
 
   if !do_bugfix then (bug_fix ast.fileName !do_parallel);
