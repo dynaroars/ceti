@@ -4,6 +4,52 @@ import os
 import sys
 import shutil
 
+def tbf_worker(src, sid, cid, idxs, do_savetemps):
+    #$ ./tf /tmp/cece_1392070907_eedfba/p.c --do_ssid 3 --xinfo z3_c0 --idxs "0 1"
+
+    idxs = " ".join(map(str,idxs))
+    xinfo = "z{}_c{}".format(len(idxs),cid)
+
+    msg = 'Python: *** instrument {} sid {} xinfo {} idxs {} ***'.format(src,sid,xinfo,idxs)
+    print msg 
+
+
+    cmd = './tf {} --do_ssid {} --xinfo {} --idxs "{}"'.format(src,sid,xinfo,idxs)
+    print "$ {}".format(cmd)
+    proc = sp.Popen(cmd,shell=True,stdin=sp.PIPE,stdout=sp.PIPE,stderr=sp.PIPE)
+    rs,rs_err = proc.communicate()
+
+    print rs_err, msg + ".. done"
+
+    assert not rs, rs
+    if "error" in rs_err:
+        print 'instrument error'
+        print cmd
+        print rs_err
+        return None
+
+    return "done instrumenting with {}".format(sid)
+
+def tbf(src, combs, do_savetemps, do_parallel):
+    #e.g., combs = [(1,5), (5,2), (9,5)]
+
+    import itertools
+    max_comb_siz = 2
+
+    combs_ = []
+    for sid,vs_siz in combs:
+        for siz in range(max_comb_siz+1):
+            cs = itertools.combinations(range(vs_siz),siz)
+            combs_.extend([(sid,i,list(c)) for i,c in enumerate(cs)])
+
+    print len(combs_)
+    print combs_
+
+    for sid,cid,idxs in combs_:
+        tbf_worker(src,sid,cid,idxs,do_savetemps)
+
+
+
 def instrument_worker(src, sid, do_savetemps):
     #./tf /tmp/cece_1391897182_68074b/p.bug2.c --do_instrument_ssid 2
 
@@ -27,7 +73,10 @@ def instrument_worker(src, sid, do_savetemps):
     return "done instrumenting with {}".format(sid)
     
 
+
 def instrument(src, ssids, do_savetemps, do_parallel):
+    #parallism on ssids
+    # time python klee_reader.py /tmp/cece_1391898175_e46d2a/p.c --do_instrument "1 2" --do_parallel
 
     print "Processing {} files (parallel: {})".format(len(ssids),do_parallel)
 
@@ -174,6 +223,8 @@ if __name__ == "__main__":
     
     aparser.add_argument("file", help="instrumented C file")
  
+
+
     aparser.add_argument("--do_savetemps",
                          help="don't remove temp files after done",
                          action="store_true")
@@ -183,19 +234,33 @@ if __name__ == "__main__":
                          action="store_true")
 
     aparser.add_argument("--do_instrument",
-                         help='instrument ssids, e.g., --do_ instrument "1 3 7 9"',
+                         help='instrument ssids, e.g., --do_tbf "1 3 7 9"',
                          dest='ssids',
+                         action="store")
+
+    aparser.add_argument("--do_tbf",
+                         help='transform and bug fix, e.g., --do_tbf "(1,5); (5,2); (9,5)"',
+                         dest='combs',
                          action="store")
 
     args = aparser.parse_args()
 
-    ssids = args.ssids
-    if ssids:
-        ssids = [int(sid) for sid in ssids.split()]
+    if args.ssids:
+        ssids = [int(sid) for sid in args.ssids.split()]
         print ssids
         instrument(args.file, ssids, 
                    do_savetemps=args.do_savetemps, 
                    do_parallel=args.do_parallel)
+    elif args.combs:
+        #[(1,5), (5,2), (9,5)]
+        combs = [comb.strip() for comb in args.combs.split(";")]
+        combs = [comb[1:][:-1] for comb in combs] #remove ( )
+        combs = [comb.split(',') for comb in combs]
+        combs = [(int(comb[0]),int(comb[1])) for comb in combs]
+
+        tbf(args.file, combs, 
+            do_savetemps=args.do_savetemps,do_parallel=args.do_parallel)
+
     else:
         read_klee(args.file,
                   do_savetemps = args.do_savetemps, 
