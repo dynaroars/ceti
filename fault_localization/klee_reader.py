@@ -4,7 +4,9 @@ import os
 import sys
 import shutil
 
-def tbf_worker(src, sid, cid, idxs, do_savetemps):
+
+
+def instrument_worker0(src, sid, cid, idxs, do_savetemps):
     #$ ./tf /tmp/cece_1392070907_eedfba/p.c --do_ssid 3 --xinfo z3_c0 --idxs "0 1"
 
     idxs = " ".join(map(str,idxs))
@@ -28,7 +30,11 @@ def tbf_worker(src, sid, cid, idxs, do_savetemps):
         print rs_err
         return None
 
-    return "done instrumenting with {}".format(sid)
+    return "success: exec cmd {}".format(cmd)
+
+def tbf_worker(src, sid, cid, idxs, do_savetemps):
+    instr_r = instrument_worker0(src, sid, cid, idxs, do_savetemps)
+    return instr_r
 
 def tbf(src, combs, do_savetemps, do_parallel):
     #e.g., combs = [(1,5), (5,2), (9,5)]
@@ -40,13 +46,46 @@ def tbf(src, combs, do_savetemps, do_parallel):
     for sid,vs_siz in combs:
         for siz in range(max_comb_siz+1):
             cs = itertools.combinations(range(vs_siz),siz)
-            combs_.extend([(sid,i,list(c)) for i,c in enumerate(cs)])
+            for i,c in enumerate(cs):
+                combs_.append((sid,i,list(c)))
+                              
 
-    print len(combs_)
-    print combs_
+    # print len(combs_)
+    # print combs_
+    # assert False 
 
-    for sid,cid,idxs in combs_:
-        tbf_worker(src,sid,cid,idxs,do_savetemps)
+    def wprocess(tasks,Q):
+        rs = [(sid,tbf_worker(src,sid,cid,idxs,do_savetemps)) for sid,cid,idxs in tasks]
+        if Q is None: #no multiprocessing
+            return rs
+        else:
+            Q.put(rs)
+
+    tasks = combs_
+
+    if do_parallel:
+        from vu_common import get_workloads
+        from multiprocessing import (Process, Queue,
+                                     current_process, cpu_count)
+        Q = Queue()
+        workloads = get_workloads(tasks,max_nprocesses=cpu_count(),chunksiz=1)
+
+        print "workloads 'tbf' {}: {}".format(len(workloads),map(len,workloads))
+        workers = [Process(target=wprocess,args=(wl,Q)) for wl in workloads]
+
+        for w in workers: w.start()
+        wrs = []
+        for _ in workers: wrs.extend(Q.get())
+
+    else:
+        wrs = wprocess(tasks,Q=None)
+        
+    wrs = [(sid,r) for (sid,r) in wrs if r]
+    print "SUMMARY: For '{}', tbf {} files / {} total (parallel: {})".format(src,len(wrs),len(tasks),do_parallel)
+
+    for i,(sid,r) in enumerate(wrs):
+        print "{}. sid {}: {}".format(i,sid,r)
+
 
 
 
