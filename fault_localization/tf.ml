@@ -27,16 +27,6 @@ let strip s =
     String.sub s !i (!j - !i + 1)
   else
     ""
-let combinations k list =
-  let rec aux k acc emit = function
-    | [] -> acc
-    | h :: t ->
-      if k = 1 then aux k (emit [h] acc) emit t else
-        let new_emit x = emit (h :: x) in
-        aux k (aux (k-1) acc new_emit t) emit t
-  in
-  let emit x acc = x :: acc in
-  aux k [] emit list
 
 let forceOption (ao : 'a option) : 'a =
   match ao with  | Some a -> a | None -> raise(Failure "forceOption")
@@ -109,8 +99,14 @@ let exec_cmd cmd =
     |Unix.WEXITED(0) -> ()
     |_ -> E.s(E.error "cmd failed '%s'" cmd)
 
+let str_split s:string list =  Str.split (Str.regexp "[ \t]+")  s
+
+
   
 (* Specific options for this program *)
+let vdebug:bool ref = ref false
+let vlog s = if !vdebug then E.log "%s" s else ()
+
 
 let uk0_min:int = -100000
 let uk0_max:int =  100000
@@ -194,7 +190,7 @@ let fd_of_sid (ast:file) (sid:int): fundec =
   visitCilFileSameGlobals ((new findFunVisitor) sid fd) ast;
   let fd = forceOption !fd in
 
-  E.log "Found sid %d in fun '%s'\n" sid fd.svar.vname ;
+  vlog (P.sprintf "Found sid %d in fun '%s'\n" sid fd.svar.vname);
   fd
 
 
@@ -214,7 +210,7 @@ let string_of_tcs (tcs:testcase list) :string =
 (*read testcases *)
 let get_tcs (filename:string) (inputs:string) (outputs:string): (int list * int) list = 
 
-  E.log "read tcs from '%s' and '%s' for program '%s'\n" inputs outputs filename;
+  vlog (P.sprintf "read tcs from '%s' and '%s' for program '%s'\n" inputs outputs filename);
 
   let inputs = read_lines inputs in
   let outputs = read_lines outputs in 
@@ -222,7 +218,7 @@ let get_tcs (filename:string) (inputs:string) (outputs:string): (int list * int)
 
   let tcs = 
     L.fold_left2 (fun acc inp outp ->
-      let inp = Str.split (Str.regexp "[ \t]+")  inp in
+      let inp = str_split  inp in
 
       (try
        let inp = L.map int_of_string inp in 
@@ -274,7 +270,7 @@ class breakCondVisitor = object
 	  let new_skind:stmtkind = If(Lval temp,b1,b2,loc) in
 	  let s2 = mkStmt new_skind in
 
-	  E.log "breaking %a\n to\n %a\n%a\n" d_stmt s d_stmt s1 d_stmt s2;
+	  if !vdebug then E.log "breaking %a\n to\n %a\n%a\n" d_stmt s d_stmt s1 d_stmt s2;
 	  
 	  [s1;s2]
 
@@ -342,8 +338,8 @@ class numVisitor ht = object
 end
 
 
-let initialize_ast (ast:file) (sid_stmt_ht:(int,stmt) H.t):fundec= 
-  E.log "*** Initializing (assigning id's to stmts)***\n";
+let preprocess (ast:file) (sid_stmt_ht:(int,stmt) H.t):fundec= 
+  E.log "*** Preprocessing***\n";
  
   visitCilFileSameGlobals (new everyVisitor) ast;
   visitCilFileSameGlobals (new breakCondVisitor) ast;
@@ -366,7 +362,7 @@ let initialize_ast (ast:file) (sid_stmt_ht:(int,stmt) H.t):fundec=
   in
 
 
-  E.log "*** Initializing .. done ***\n";
+  E.log "*** Proprocessing .. done ***\n";
   mainQ_fd
 
 
@@ -386,7 +382,7 @@ let initialize_files filename inputs outputs =
 
 
 let cleanup tdir = 
-  E.log "Note: all temp files are created in dir '%s'\n" tdir 
+  E.log "Note: temp files created in dir '%s'\n" tdir 
     
 
 (********************** Initial Check **********************)
@@ -403,7 +399,7 @@ let mk_testscript (testscript:string) (tcs:(int list * int) list) =
   let content = String.concat "\n" content in
   let content = P.sprintf "#!/bin/bash\nulimit -t 1\n%s\nwait\nexit 0\n" content in
   
-  E.log "%s" content;
+  vlog content;
   write_file_str testscript content
     
 
@@ -455,8 +451,8 @@ let checkInit (filename:string) (tcs:(int list * int) list)  =
     If yes then exit. If no then there's bug to fix*)
   let goods,bads = compare_outputs prog_output tcs in 
   let nbads = L.length bads in
-  if nbads = 0 then (E.log "All tests passed .. no bug found\n"; exit 0)
-  else (E.log "%d tests failed\n" nbads);
+  if nbads = 0 then (E.log "All tests passed .. no bug found .. done\n"; exit 0)
+  else (E.log "%d tests failed ... bug found .. processing\n" nbads);
   
   E.log "*** Init Check .. done ***\n";
   goods, bads
@@ -509,8 +505,6 @@ end
 
 let coverage (ast:file) (filename_cov:string) (filename_path:string) = 
 
-  E.log "*** Creating coverage info ***\n";
-
   (*add printf stmts*)
   visitCilFileSameGlobals (new coverageVisitor) ast;
 
@@ -529,16 +523,15 @@ let coverage (ast:file) (filename_cov:string) (filename_path:string) =
   let fd = getGlobInit ast in
   fd.sbody.bstmts <- new_s :: fd.sbody.bstmts;
   
-  write_src filename_cov  ast;
+  write_src filename_cov  ast
 
-  E.log "*** Creating coverage info .. done ***\n"
 
 
 (******** Tarantula Fault Loc ********)
 (* Analyze execution path *)    
 let analyze_path (filename:string): int * (int,int) H.t= 
 
-  E.log "** Analyze execution path '%s'\n" filename;
+  vlog (P.sprintf "** Analyze execution path '%s'\n" filename);
   let tc_ctr = ref 0 in
   let ht_stat = H.create 1024 in 
   let mem = H.create 1024 in 
@@ -602,7 +595,7 @@ let tarantula (n_g:int) (ht_g:(int,int) H.t) (n_b:int) (ht_b:(int,int) H.t) : ss
   rs
 
 
-let fault_loc (ast:file) (goods:testcase list) (bads:testcase list): sscore list = 
+let fault_loc (ast:file) (goods:testcase list) (bads:testcase list) (sid_stmt_ht:(sid_t,stmt) H.t): sid_t list = 
   E.log "*** Fault Localization ***\n";
 
   assert (L.length goods > 0) ;
@@ -644,8 +637,15 @@ let fault_loc (ast:file) (goods:testcase list) (bads:testcase list): sscore list
   let n_b, ht_b = analyze_path path_b in
   let sscores = tarantula n_g ht_g n_b ht_b in
 
+  E.log "Suspicious scores for %d stmt\n" (L.length sscores);
+  L.iter (fun (sid,score) -> 
+    E.log "sid %d -> score %g\n%a\n" sid score d_stmt (H.find sid_stmt_ht sid)
+  ) sscores;
+
+  let ssids:sid_t list = L.map fst sscores in  
+
   E.log "*** Fault Localization .. done ***\n";
-  sscores
+  ssids
 
 
 (******************* Transforming File *******************)
@@ -878,8 +878,9 @@ let transform_cvs (ast:file) (mainQ:fundec)
 
 let spy_sid (ast:file) (ssid:sid_t): varinfo array =
 
-  E.log "** Obtain vs info in scope of sid %d in file '%s'\n"
-    ssid ast.fileName ;
+  vlog (P.sprintf "** Obtain vs info in scope of sid %d in file '%s'\n"
+	  ssid ast.fileName) ;
+
   (*E.log "%a\n" d_stmt (H.find sid_stmt_ht ssid);*)
 
   (*find which function contains suspicious stmt id*)
@@ -895,17 +896,21 @@ let spy_sid (ast:file) (ssid:sid_t): varinfo array =
   in
   let vs = L.filter vi_pred vs' in
 
-  E.log "Using %d/%d avail vars in fun %s\n"
-    (L.length vs) (L.length vs') sfd.svar.vname;
-  E.log "[%s]\n" (String.concat ", " (get_names vs));
+  vlog (P.sprintf "Using %d/%d avail vars in fun %s\n"
+	  (L.length vs) (L.length vs') sfd.svar.vname);
+
+  vlog (P.sprintf "[%s]\n" (String.concat ", " (get_names vs)));
 
   Array.of_list(vs)  
 
 
-let tbf (ast:file) (mainQ:fundec) (ssids:sid_t list) (tcs:testcase list) (do_parallel:bool) =
-  assert (L.length ssids > 0);
+let tbf (ast:file) (mainQ:fundec) (ssids:sid_t list) (tcs:testcase list) 
+    (no_bugfix:bool) 
+    (no_parallel:bool) : unit=
 
-  E.log "*** Transform ***\n";
+  E.log "*** TBF ***\n";
+
+  assert (L.length ssids > 0);
 
   (*iterate through top n ssids*)
   let ssids = take top_n_ssids ssids in
@@ -921,29 +926,18 @@ let tbf (ast:file) (mainQ:fundec) (ssids:sid_t list) (tcs:testcase list) (do_par
   let combs = L.map2 (fun sid vs_a ->    (*"(sid,length arr); () .."*)
     P.sprintf "(%d, %d)" sid (A.length vs_a)) ssids vs_arrs in
   let combs = String.concat "; " combs in 
-  let kr_option = if do_parallel then "--do_parallel" else "" in 
-  let cmd = P.sprintf "python klee_reader.py %s --do_tbf \"%s\" %s" 
-    ast.fileName combs kr_option in 
-  exec_cmd cmd ;
-
-  E.log "*** Transform .. done ***\n"
-
-
-
-let bug_fix (filename:string) (do_parallel:bool)= 
-  E.log "*** Bug Fix ***\n";  
-
-  (*run klee on transformed files
-    $time python klee_reader.py tests/p.c --do_parallel
-  *)
-  E.log "Run Klee on transformed files from '%s' (parallel: %b)\n" 
-    filename do_parallel;
-    
-  let kr_option = if do_parallel then "--do_parallel" else "" in
-  let cmd = P.sprintf "python klee_reader.py %s %s" filename kr_option in 
-  exec_cmd cmd ;
   
-  E.log "*** Bug Fix .. done ***\n"
+  let kr_options = [if no_parallel then "--no_parallel" else "";
+		    if no_bugfix then  "--no_bugfix"  else ""
+		   ] in 
+  let kr_options = String.concat " " kr_options in 
+
+  let cmd = P.sprintf "python klee_reader.py %s --do_tbf \"%s\" %s" 
+    ast.fileName combs kr_options in 
+
+  exec_cmd cmd ;
+
+  E.log "*** TBF .. done ***\n"
 
 
 
@@ -955,26 +949,28 @@ let () = begin
   let inputs   = ref "" in
   let outputs  = ref "" in 
 
-  let do_faultloc = ref false in
-  let do_transform = ref false in
-  let do_bugfix = ref false in
-
+  let no_parallel = ref false in 
+  let no_bugfix = ref false in 
+  let no_faultloc = ref "" in (*manually provide fault loc info*)
 
   let do_ssid = ref (-1) in  (*only do transformation on vs_idxs*)
   let xinfo = ref "" in  (*helpful info for debuggin*)
   let idxs = ref "" in 
 
-  let do_parallel = ref false in 
 
   let argDescr = [
-    "--do_faultloc", Arg.Set do_faultloc, "do fault localization";
-    "--do_transform", Arg.Set do_transform, "do transform";
-    "--do_bugfix", Arg.Set do_bugfix, "do bugfix";
-    "--do_parallel", Arg.Set do_parallel, "do parallel";
+    "--no_bugfix", Arg.Set no_bugfix, "B don't do bugfix";
+    
+    
+    "--no_faultloc", Arg.Set_string no_faultloc, 
+    "S manually provide suspicious stmts for fault loc, --no_faultloc 1 3 7";
 
-    "--do_ssid", Arg.Set_int do_ssid, "X ssid";
-    "--xinfo", Arg.Set_string xinfo, "S xinfo";
-    "--idxs", Arg.Set_string idxs, "S idxs";
+
+    "--no_parallel", Arg.Set no_parallel, "B don't use multiprocessing";
+
+    "--do_ssid", Arg.Set_int do_ssid, "X act as a stand alone transformer that modify code (goes together with --xinfo --idxs-- flags)";
+    "--xinfo", Arg.Set_string xinfo, "S --xinfo z2_c5";
+    "--idxs", Arg.Set_string idxs, "S idxs --idxs \"3 7 8\"";
   ] in
 
   let usage = "usage: tf [src inputs outputs]\n" in
@@ -993,7 +989,7 @@ let () = begin
   if !do_ssid > -1 then (
     let ssid   = !do_ssid in
     let xinfo  = !xinfo in 
-    let idxs =  L.map int_of_string (Str.split (Str.regexp "[ \t]+")  !idxs) in
+    let idxs =  L.map int_of_string (str_split !idxs) in
 
     assert (ssid > 0);
     assert (L.length idxs >= 0 && L.for_all (fun idx -> idx >= 0) idxs);
@@ -1029,29 +1025,22 @@ let () = begin
   let goods, bads = checkInit filename tcs in
   
   let ast = Frontc.parse filename () in 
-  let sid_stmt_ht:(int,stmt) H.t = H.create 1024 in 
-  let mainQ = initialize_ast ast sid_stmt_ht in  (*modify ast, etc*)
+  let sid_stmt_ht:(sid_t,stmt) H.t = H.create 1024 in 
+  let mainQ = preprocess ast sid_stmt_ht in  (*modify ast, etc*)
 
   (*write info to disk for parallelism use*)
   write_file_bin (ginfo_s ast.fileName) (ast,mainQ,tcs); 
 
   (*** fault localization ***)
-  let sscores:sscore list = 
-    if !do_faultloc then fault_loc ast goods bads else [(1,1.)] 
-  in
+  let ssids:sid_t list = 
+    if !no_faultloc = "" then fault_loc ast goods bads sid_stmt_ht 
+    else L.map int_of_string (str_split !no_faultloc) 
+  in 
 
-  E.log "Suspicious scores for %d stmt\n" (L.length sscores);
-  L.iter (fun (sid,score) -> 
-    E.log "sid %d -> score %g\n%a\n" sid score d_stmt (H.find sid_stmt_ht sid)
-  ) sscores;
+  
+  (*** transformation and bug fixing ***)
+  tbf ast mainQ ssids tcs !no_bugfix !no_parallel 
 
-  let ssids:sid_t list = L.map fst sscores in   
-
-  if !do_transform then (
-    tbf ast mainQ ssids tcs !do_parallel
-  );
-
-  if !do_bugfix then (bug_fix ast.fileName !do_parallel);
 
 end
 

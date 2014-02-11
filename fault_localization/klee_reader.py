@@ -5,38 +5,125 @@ import sys
 import shutil
 
 
+vdebug = False
 
-def instrument_worker0(src, sid, cid, idxs, do_savetemps):
+def instrument_worker(src, sid, xinfo, idxs):
     #$ ./tf /tmp/cece_1392070907_eedfba/p.c --do_ssid 3 --xinfo z3_c0 --idxs "0 1"
-
-    idxs = " ".join(map(str,idxs))
-    xinfo = "z{}_c{}".format(len(idxs),cid)
-
-    msg = 'Python: *** instrument {} sid {} xinfo {} idxs {} ***'.format(src,sid,xinfo,idxs)
-    print msg 
-
+    
+    msg = 'Python: *** create {} sid {} xinfo {} idxs {} ***'.format(src,sid,xinfo,idxs)
+    if vdebug: print msg 
 
     cmd = './tf {} --do_ssid {} --xinfo {} --idxs "{}"'.format(src,sid,xinfo,idxs)
-    print "$ {}".format(cmd)
+    if vdebug: print "$ {}".format(cmd)
     proc = sp.Popen(cmd,shell=True,stdin=sp.PIPE,stdout=sp.PIPE,stderr=sp.PIPE)
     rs,rs_err = proc.communicate()
 
-    print rs_err, msg + ".. done"
-
     assert not rs, rs
-    if "error" in rs_err:
-        print 'instrument error'
+    if "error" in rs_err or "write_src" not in rs_err:
+        print 'something wrong with instrumentation'
         print cmd
         print rs_err
         return None
 
-    return "success: exec cmd {}".format(cmd)
+    #get the created file name 
+    #write_src: "/tmp/cece_1392071927_eeea2d/p.bug2.c.s3.z3_c5.tf.c"
+    rs_file = ""
+    for line in rs_err.split("\n"):
+        if "write_src:" in line: 
+            rs_file = line[line.find(':')+1:].strip()[1:][:-1]
+            break
 
-def tbf_worker(src, sid, cid, idxs, do_savetemps):
-    instr_r = instrument_worker0(src, sid, cid, idxs, do_savetemps)
-    return instr_r
+    if vdebug: print 'create {}'.format(rs_file)
+    return rs_file
 
-def tbf(src, combs, do_savetemps, do_parallel):
+#compile file then run klee on the resulting object file
+def read_klee_worker (src):
+    if vdebug: print "Python: *** run klee on {} ***".format(src)
+
+    #compile file with llvm
+    include_path = "/home/Storage/Src/Devel/KLEE/klee/include"
+    llvm_opts =  "--optimize -emit-llvm -c"
+    obj = os.path.splitext(src)[0] + os.extsep + 'o'
+    
+    cmd = "llvm-gcc -I {} {} {} -o {}".format(include_path,llvm_opts,src,obj)
+    if vdebug: print "$ {}".format(cmd)
+
+    proc = sp.Popen(cmd,shell=True,stdin=sp.PIPE,stdout=sp.PIPE,stderr=sp.PIPE)
+    rs,rs_err = proc.communicate()
+
+    assert not rs, rs
+    if "llvm-gcc" in rs_err or "error" in rs_err:
+        print 'compile error:\n', rs_err
+        return None
+    
+
+    #run klee and monitor its output
+    klee_outdir = "{}-klee-out".format(obj)
+    if os.path.exists(klee_outdir): shutil.rmtree(klee_outdir)
+
+    klee_opts = "--allow-external-sym-calls -output-dir={}".format(klee_outdir)
+
+    cmd = "klee {} {}".format(klee_opts,obj)
+    if vdebug: print "$ {}".format(cmd)
+    proc = sp.Popen(cmd,shell=True,stdout=sp.PIPE, stderr=sp.STDOUT)
+
+    ignores_done = ['KLEE: done: total instructions',
+                    'KLEE: done: completed paths',
+                    'KLEE: done: generated tests']
+
+    ignores_run = ['KLEE: WARNING: undefined reference to function: printf',
+                   'KLEE: WARNING ONCE: calling external: printf',
+                   'KLEE: ERROR: ASSERTION FAIL: 0']
+
+    while proc.poll() is None:
+        line = proc.stdout.readline()
+        line = line.strip()
+        if line:
+            if all(x not in line for x in ignores_run + ignores_done):
+                if vdebug: print 'stdout:', line
+                
+            if "KLEE: ERROR: ASSERTION FAIL: 0" in line: 
+                #print 'GOT IT'
+                break
+        #sys.stdout.flush()
+            
+    rs,rs_err = proc.communicate()
+
+    assert not rs_err, rs_err
+
+    ignores_miscs = ['KLEE: NOTE: now ignoring this error at this location',
+                     'GOAL: ']
+
+    if rs:
+        for line in rs.split('\n'):
+            if line:
+                if all(x not in line for x in ignores_done + ignores_miscs):
+                    if vdebug: print 'rs:', line
+                
+                #GOAL: uk_0 0, uk_1 0, uk_2 1
+                if 'GOAL' in line:
+                    s = line[line.find(':')+1:].strip()
+                    s = 'fix {}: {}'.format(src,s)
+                    print s
+                    return s
+
+
+    return None
+        
+
+def tbf_worker(src, sid, cid, idxs, no_bugfix):
+    idxs = " ".join(map(str,idxs))
+    xinfo = "z{}_c{}".format(len(idxs),cid)
+    
+    r = instrument_worker(src, sid, xinfo, idxs)
+    if no_bugfix: 
+        return r
+    else:
+        r = read_klee_worker(r)
+        return r
+
+
+def tbf(src, combs, no_bugfix, no_parallel):
     #e.g., combs = [(1,5), (5,2), (9,5)]
 
     import itertools
@@ -55,7 +142,8 @@ def tbf(src, combs, do_savetemps, do_parallel):
     # assert False 
 
     def wprocess(tasks,Q):
-        rs = [(sid,tbf_worker(src,sid,cid,idxs,do_savetemps)) for sid,cid,idxs in tasks]
+        rs = [tbf_worker(src,sid,cid,idxs,no_bugfix) 
+              for sid,cid,idxs in tasks]
         if Q is None: #no multiprocessing
             return rs
         else:
@@ -63,247 +151,70 @@ def tbf(src, combs, do_savetemps, do_parallel):
 
     tasks = combs_
 
-    if do_parallel:
+    if no_parallel:
+        wrs = wprocess(tasks,Q=None)
+
+    else:
         from vu_common import get_workloads
         from multiprocessing import (Process, Queue,
                                      current_process, cpu_count)
+
         Q = Queue()
         workloads = get_workloads(tasks,max_nprocesses=cpu_count(),chunksiz=1)
 
-        print "workloads 'tbf' {}: {}".format(len(workloads),map(len,workloads))
+        print "Python: workloads 'tbf' {}: {}".format(len(workloads),map(len,workloads))
         workers = [Process(target=wprocess,args=(wl,Q)) for wl in workloads]
 
         for w in workers: w.start()
         wrs = []
         for _ in workers: wrs.extend(Q.get())
-
-    else:
-        wrs = wprocess(tasks,Q=None)
-        
-    wrs = [(sid,r) for (sid,r) in wrs if r]
-    print "SUMMARY: For '{}', tbf {} files / {} total (parallel: {})".format(src,len(wrs),len(tasks),do_parallel)
-
-    for i,(sid,r) in enumerate(wrs):
-        print "{}. sid {}: {}".format(i,sid,r)
-
-
-
-
-def instrument_worker(src, sid, do_savetemps):
-    #./tf /tmp/cece_1391897182_68074b/p.bug2.c --do_instrument_ssid 2
-
-    msg = 'Python: *** instrument {} wrt sid {} ***'.format(src,sid)
-    print msg 
-
-    cmd = "./tf {} --do_instrument_ssid {}".format(src,sid)
-    print "$ {}".format(cmd)
-    proc = sp.Popen(cmd,shell=True,stdin=sp.PIPE,stdout=sp.PIPE,stderr=sp.PIPE)
-    rs,rs_err = proc.communicate()
-
-    print rs_err, msg + ".. done"
-
-    assert not rs, rs
-    if "error" in rs_err:
-        print 'instrument error'
-        print cmd
-        print rs_err
-        return None
-
-    return "done instrumenting with {}".format(sid)
-    
-
-
-def instrument(src, ssids, do_savetemps, do_parallel):
-    #parallism on ssids
-    # time python klee_reader.py /tmp/cece_1391898175_e46d2a/p.c --do_instrument "1 2" --do_parallel
-
-    print "Processing {} files (parallel: {})".format(len(ssids),do_parallel)
-
-    def wprocess(tasks,Q):
-        rs = [(sid,instrument_worker(src,sid,do_savetemps)) for sid in tasks]
-        if Q is None: #no multiprocessing
-            return rs
-        else:
-            Q.put(rs)
-
-    tasks = ssids
-
-    if do_parallel:
-        from vu_common import get_workloads
-        from multiprocessing import (Process, Queue,
-                                     current_process, cpu_count)
-        Q = Queue()
-        workloads = get_workloads(tasks,max_nprocesses=cpu_count(),chunksiz=1)
-
-        print "workloads 'instrument ssid' {}: {}".format(len(workloads),map(len,workloads))
-        workers = [Process(target=wprocess,args=(wl,Q)) for wl in workloads]
-
-        for w in workers: w.start()
-        wrs = []
-        for _ in workers: wrs.extend(Q.get())
-
-    else:
-        wrs = wprocess(tasks,Q=None)
-        
-    wrs = [(sid,r) for (sid,r) in wrs if r]
-    print "SUMMARY: For '{}', instrument {} files / {} total (parallel: {})".format(src,len(wrs),len(tasks),do_parallel)
-
-    for i,(sid,r) in enumerate(wrs):
-        print "{}. sid {}: {}".format(i,sid,r)
-
-#compile file then run klee on the resulting object file
-def read_klee_worker (src, do_savetemps):
-    print "Python: *** processing {} ***".format(src)
-
-    #compile file with llvm
-    include_path = "/home/Storage/Src/Devel/KLEE/klee/include"
-    llvm_opts =  "--optimize -emit-llvm -c"
-    obj = os.path.splitext(src)[0] + os.extsep + 'o'
-    
-    cmd = "llvm-gcc -I {} {} {} -o {}".format(include_path,llvm_opts,src,obj)
-    print "$ {}".format(cmd)
-    proc = sp.Popen(cmd,shell=True,stdin=sp.PIPE,stdout=sp.PIPE,stderr=sp.PIPE)
-    rs,rs_err = proc.communicate()
-
-    assert not rs, rs
-
-    if "llvm-gcc" in rs_err or "error" in rs_err:
-        print 'compile error:\n', rs_err
-        return None
-    
-
-    #run klee and monitor its output
-    klee_outdir = "{}-klee-out".format(obj)
-    klee_opts = " --allow-external-sym-calls -output-dir={}".format(klee_outdir)
-
-    cmd = "klee {} {}".format(klee_opts,obj)
-    print "$ {}".format(cmd)
-    proc = sp.Popen(cmd,shell=True,stdout=sp.PIPE, stderr=sp.STDOUT)
-
-    while proc.poll() is None:
-        line = proc.stdout.readline()
-        line = line.strip()
-        if line:
-            print 'stdout:', line
-            if "KLEE: ERROR: ASSERTION FAIL: 0" in line: 
-                print 'Got It!'
-                break
-        #sys.stdout.flush()
             
 
+    wrs = [r for r in wrs if r]
+    print ("Python Summary: For '{}', tbf {} files / {} total (bugfix: {}, parallel: {})"
+           .format(src,len(wrs),len(tasks), not no_bugfix, not no_parallel))
 
-    rs,rs_err = proc.communicate()
-
-
-    if rs_err: print 'rs_err:\n',rs_err
-
-    if rs: 
-        print 'rs:\n',rs
-        rs = [r for r in rs.split('\n') if 'GOAL' in r]
-        if len(rs) == 1:
-            rs = rs[0]
-            rs = rs[rs.find(':')+1:].strip()
-
-        return rs
+    for i,r in enumerate(wrs):
+        print "{}. {}".format(i,r)
 
 
-    print "No result for '{}'".format(src)
-    return None
-        
 
-def read_klee(src, do_savetemps, do_parallel):
-    file_ = os.path.basename(src)
-    dir_ = os.path.dirname(src)
-
-    
-    files = [os.path.join(dir_,f) for f in os.listdir(dir_)
-             if f.endswith('.tf.c') and f.startswith(file_)]
-
-    files = sorted(files)
-    #Iterate over all file with .tf.c extension
-    print "Processing {} files (parallel: {})".format(len(files),do_parallel)
-
-    def wprocess(tasks,Q):
-        rs = [(f, read_klee_worker(f,do_savetemps)) for f in tasks]
-        if Q is None: #no multiprocessing
-            return rs
-        else:
-            Q.put(rs)
-
-    tasks = files
-
-    if do_parallel:
-        from vu_common import get_workloads
-        from multiprocessing import (Process, Queue,
-                                     current_process, cpu_count)
-        Q = Queue()
-        workloads = get_workloads(tasks,max_nprocesses=cpu_count(),chunksiz=2)
-
-        print "workloads 'read_klee' {}: {}".format(len(workloads),map(len,workloads))
-        workers = [Process(target=wprocess,args=(wl,Q)) for wl in workloads]
-
-        for w in workers: w.start()
-        wrs = []
-        for _ in workers: wrs.extend(Q.get())
-    else:
-        wrs = wprocess(tasks,Q=None)
-
-    #rs = [(f,read_klee(f,do_savetemps)) for f in files]
-
-    wrs = [(f,r) for (f,r) in wrs if r]
-    print "SUMMARY: For '{}', found {} fixes/ {} total (parallel: {})".format(src,len(wrs),len(tasks),do_parallel)
-    for i,(f,r) in enumerate(wrs):
-        print "{}.{}: {}".format(i, f, r)
-        
 
 if __name__ == "__main__":
     import argparse
     aparser = argparse.ArgumentParser()
     
-    aparser.add_argument("file", help="instrumented C file")
+    aparser.add_argument("file", help="src code")
  
-
-
-    aparser.add_argument("--do_savetemps",
-                         help="don't remove temp files after done",
-                         action="store_true")
-
-    aparser.add_argument("--do_parallel",
-                         help="use multiprocessing",
-                         action="store_true")
-
-    aparser.add_argument("--do_instrument",
-                         help='instrument ssids, e.g., --do_tbf "1 3 7 9"',
-                         dest='ssids',
-                         action="store")
-
     aparser.add_argument("--do_tbf",
                          help='transform and bug fix, e.g., --do_tbf "(1,5); (5,2); (9,5)"',
                          dest='combs',
                          action="store")
 
+    aparser.add_argument("--no_parallel",
+                         help="don't use multiprocessing",
+                         action="store_true")
+
+    aparser.add_argument("--no_bugfix",
+                         help="run klee to find fix",
+                         action="store_true")
+
+    aparser.add_argument("--continue",
+                         help="continue even if a fix is found",
+                         action="store_true")
+                         
+
     args = aparser.parse_args()
 
-    if args.ssids:
-        ssids = [int(sid) for sid in args.ssids.split()]
-        print ssids
-        instrument(args.file, ssids, 
-                   do_savetemps=args.do_savetemps, 
-                   do_parallel=args.do_parallel)
-    elif args.combs:
-        #[(1,5), (5,2), (9,5)]
-        combs = [comb.strip() for comb in args.combs.split(";")]
-        combs = [comb[1:][:-1] for comb in combs] #remove ( )
-        combs = [comb.split(',') for comb in combs]
-        combs = [(int(comb[0]),int(comb[1])) for comb in combs]
+    assert args.combs         #[(1,5), (5,2), (9,5)]
+    combs = [comb.strip() for comb in args.combs.split(";")]
+    combs = [comb[1:][:-1] for comb in combs] #remove ( )
+    combs = [comb.split(',') for comb in combs]
+    combs = [(int(comb[0]),int(comb[1])) for comb in combs]
 
-        tbf(args.file, combs, 
-            do_savetemps=args.do_savetemps,do_parallel=args.do_parallel)
-
-    else:
-        read_klee(args.file,
-                  do_savetemps = args.do_savetemps, 
-                  do_parallel=args.do_parallel)
+    tbf(args.file, combs, 
+        no_bugfix=args.no_bugfix,
+        no_parallel=args.no_parallel)
 
              
                          
