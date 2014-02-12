@@ -10,8 +10,7 @@ vdebug = False
 def instrument_worker(src, sid, xinfo, idxs):
     #$ ./tf /tmp/cece_1392070907_eedfba/p.c --do_ssid 3 --xinfo z3_c0 --idxs "0 1"
     
-    msg = 'Python: *** create {} sid {} xinfo {} idxs {} ***'.format(src,sid,xinfo,idxs)
-    if vdebug: print msg 
+    if vdebug: print 'KR: *** create {} sid {} xinfo {} idxs {} ***'.format(src,sid,xinfo,idxs)
 
     cmd = './tf {} --do_ssid {} --xinfo {} --idxs "{}"'.format(src,sid,xinfo,idxs)
     if vdebug: print "$ {}".format(cmd)
@@ -38,7 +37,7 @@ def instrument_worker(src, sid, xinfo, idxs):
 
 #compile file then run klee on the resulting object file
 def read_klee_worker (src):
-    if vdebug: print "Python: *** run klee on {} ***".format(src)
+    if vdebug: print "KR: *** run klee on {} ***".format(src)
 
     #compile file with llvm
     include_path = "/home/Storage/Src/Devel/KLEE/klee/include"
@@ -61,7 +60,11 @@ def read_klee_worker (src):
     klee_outdir = "{}-klee-out".format(obj)
     if os.path.exists(klee_outdir): shutil.rmtree(klee_outdir)
 
-    klee_opts = "--allow-external-sym-calls -output-dir={}".format(klee_outdir)
+    klee_opts = \
+        "--allow-external-sym-calls "\
+        "-optimize "\
+        "--max-time=600. "\
+        "-output-dir={}".format(klee_outdir)
 
     cmd = "klee {} {}".format(klee_opts,obj)
     if vdebug: print "$ {}".format(cmd)
@@ -71,9 +74,10 @@ def read_klee_worker (src):
                     'KLEE: done: completed paths',
                     'KLEE: done: generated tests']
 
-    ignores_run = ['KLEE: WARNING: undefined reference to function: printf',
-                   'KLEE: WARNING ONCE: calling external: printf',
-                   'KLEE: ERROR: ASSERTION FAIL: 0']
+    ignores_run = [
+        'KLEE: WARNING: undefined reference to function: printf',
+        'KLEE: WARNING ONCE: calling external: printf',
+        'KLEE: ERROR: ASSERTION FAIL: 0']
 
     while proc.poll() is None:
         line = proc.stdout.readline()
@@ -123,7 +127,7 @@ def tbf_worker(src, sid, cid, idxs, no_bugfix):
         return r
 
 
-def tbf(src, combs, no_bugfix, no_parallel):
+def tbf(src, combs, no_bugfix, no_parallel, no_break):
     #e.g., combs = [(1,5), (5,2), (9,5)]
 
     import itertools
@@ -141,43 +145,89 @@ def tbf(src, combs, no_bugfix, no_parallel):
     # print combs_
     # assert False 
 
-    def wprocess(tasks,Q):
-        rs = [tbf_worker(src,sid,cid,idxs,no_bugfix) 
-              for sid,cid,idxs in tasks]
-        if Q is None: #no multiprocessing
-            return rs
-        else:
-            Q.put(rs)
+    def wprocess(tasks,V,Q):
+
+        if no_break:
+            rs = [tbf_worker(src,sid,cid,idxs,no_bugfix) for sid,cid,idxs in tasks]
+            if Q is None:
+                return rs
+            else:
+                Q.put(rs)
+                return None
+
+        else: #break after finding a fix 
+            rs = []
+            if Q is None:  #no multiprocessing
+                for sid,cid,idxs in tasks:
+                    r = tbf_worker(src,sid,cid,idxs,no_bugfix)
+                    if r: 
+                        if vdebug: print "sol found, break !"
+                        rs.append(r)
+                        break
+                return rs
+
+            else: #multiprocessing
+                for sid,cid,idxs in tasks:
+                    if V.value > 0: 
+                        if vdebug: print "sol found, break !"
+                        break
+                    else:
+                        r = tbf_worker(src,sid,cid,idxs,no_bugfix)
+                        if r: 
+                            rs.append(r)
+                            V.value = 1
+                            break
+
+                Q.put(rs)
+                return None
+    
+    # def wprocess_fake(tasks,V,Q):
+    #     if len(tasks) == 6:
+    #         import time
+    #         time.sleep(2)
+
+    #     if Q is None:
+    #         return range(len(tasks))
+    #     else:
+    #         Q.put(range(len(tasks)))
+    #         return None
+
+    ###
+
 
     tasks = combs_
 
     if no_parallel:
-        wrs = wprocess(tasks,Q=None)
-
+        wrs = wprocess(tasks,V=None,Q=None)
+        
     else:
         from vu_common import get_workloads
-        from multiprocessing import (Process, Queue,
+        from multiprocessing import (Process, Queue, Value,
                                      current_process, cpu_count)
 
         Q = Queue()
+        V = Value("i",0)
+
         workloads = get_workloads(tasks,max_nprocesses=cpu_count(),chunksiz=1)
 
-        print "Python: workloads 'tbf' {}: {}".format(len(workloads),map(len,workloads))
-        workers = [Process(target=wprocess,args=(wl,Q)) for wl in workloads]
+        print ("KR: tbf tasks {}, workloads 'tbf' {}: {}"
+               .format(len(tasks), len(workloads),map(len,workloads)))
+        workers = [Process(target=wprocess,args=(wl,V,Q)) for wl in workloads]
 
         for w in workers: w.start()
         wrs = []
-        for _ in workers: wrs.extend(Q.get())
+        for i,_ in enumerate(workers):
+            wrs.extend(Q.get())
+        
+
             
 
     wrs = [r for r in wrs if r]
-    print ("Python Summary: For '{}', tbf {} files / {} total (bugfix: {}, parallel: {})"
-           .format(src,len(wrs),len(tasks), not no_bugfix, not no_parallel))
+    print ("KR summary: '{}', tbf {} files / {} total (bugfix: {}, parallel: {}, break: {})"
+           .format(src,len(wrs),len(tasks), not no_bugfix, not no_parallel, not no_break))
 
     for i,r in enumerate(wrs):
         print "{}. {}".format(i,r)
-
-
 
 
 if __name__ == "__main__":
@@ -196,11 +246,11 @@ if __name__ == "__main__":
                          action="store_true")
 
     aparser.add_argument("--no_bugfix",
-                         help="run klee to find fix",
+                         help="don't run klee to find fix",
                          action="store_true")
 
-    aparser.add_argument("--continue",
-                         help="continue even if a fix is found",
+    aparser.add_argument("--no_break",
+                         help="don't stop bugfix process after a sol is found ",
                          action="store_true")
                          
 
@@ -214,7 +264,8 @@ if __name__ == "__main__":
 
     tbf(args.file, combs, 
         no_bugfix=args.no_bugfix,
-        no_parallel=args.no_parallel)
+        no_parallel=args.no_parallel,
+        no_break=args.no_break)
 
              
                          
