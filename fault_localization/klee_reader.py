@@ -4,20 +4,22 @@ import os
 import sys
 import shutil
 
-
 vdebug = False
 
 def instrument_worker(src, sid, xinfo, idxs):
     #$ ./tf /tmp/cece_1392070907_eedfba/p.c --do_ssid 3 --xinfo z3_c0 --idxs "0 1"
     
     if vdebug: print 'KR: *** create {} sid {} xinfo {} idxs {} ***'.format(src,sid,xinfo,idxs)
-
-    cmd = './tf {} --do_ssid {} --xinfo {} --idxs "{}"'.format(src,sid,xinfo,idxs)
+    
+    cmd = ('./tf {} --do_ssid {} --xinfo {} --idxs "{}" {}'
+           .format(src,sid,xinfo,idxs,"--debug" if vdebug else ""))
+                   
     if vdebug: print "$ {}".format(cmd)
     proc = sp.Popen(cmd,shell=True,stdin=sp.PIPE,stdout=sp.PIPE,stderr=sp.PIPE)
     rs,rs_err = proc.communicate()
 
     assert not rs, rs
+    
     if "error" in rs_err or "write_src" not in rs_err:
         print 'something wrong with instrumentation'
         print cmd
@@ -32,7 +34,8 @@ def instrument_worker(src, sid, xinfo, idxs):
             rs_file = line[line.find(':')+1:].strip()[1:][:-1]
             break
 
-    if vdebug: print 'create {}'.format(rs_file)
+    if vdebug: print rs_err
+        
     return rs_file
 
 #compile file then run klee on the resulting object file
@@ -40,7 +43,7 @@ def read_klee_worker (src):
     if vdebug: print "KR: *** run klee on {} ***".format(src)
 
     #compile file with llvm
-    include_path = "/home/Storage/Src/Devel/KLEE/klee/include"
+    include_path = "~/Src/Devel/KLEE/klee/include"
     llvm_opts =  "--optimize -emit-llvm -c"
     obj = os.path.splitext(src)[0] + os.extsep + 'o'
     
@@ -86,7 +89,7 @@ def read_klee_worker (src):
             if all(x not in line for x in ignores_run + ignores_done):
                 if vdebug: print 'stdout:', line
                 
-            if "KLEE: ERROR: ASSERTION FAIL: 0" in line: 
+            if "KLEE: ERROR" in line and "ASSERTION FAIL: 0" in line: 
                 #print 'GOT IT'
                 break
         #sys.stdout.flush()
@@ -120,11 +123,14 @@ def tbf_worker(src, sid, cid, idxs, no_bugfix):
     xinfo = "z{}_c{}".format(len(idxs),cid)
     
     r = instrument_worker(src, sid, xinfo, idxs)
-    if no_bugfix: 
-        return r
-    else:
-        r = read_klee_worker(r)
-        return r
+    if r :
+        if no_bugfix: 
+            return r
+        else:
+            r = read_klee_worker(r)
+            return r
+
+    return None
 
 
 def tbf(src, combs, no_bugfix, no_parallel, no_break):
@@ -223,8 +229,12 @@ def tbf(src, combs, no_bugfix, no_parallel, no_break):
             
 
     wrs = [r for r in wrs if r]
-    print ("KR summary: '{}', tbf {} files / {} total (bugfix: {}, parallel: {}, break: {})"
-           .format(src,len(wrs),len(tasks), not no_bugfix, not no_parallel, not no_break))
+    print ("===== KR summary (bugfix: {}, parallel: {}, break: {}):"\
+               "'{}', tbf {} / {} ====="
+           .format(not no_bugfix, 
+                   not no_parallel, 
+                   not no_break,
+                   src,len(wrs),len(tasks)))
 
     for i,r in enumerate(wrs):
         print "{}. {}".format(i,r)
@@ -252,9 +262,15 @@ if __name__ == "__main__":
     aparser.add_argument("--no_break",
                          help="don't stop bugfix process after a sol is found ",
                          action="store_true")
+
+    aparser.add_argument("--debug",
+                         help="shows debug info ",
+                         action="store_true")
                          
 
     args = aparser.parse_args()
+
+    vdebug = args.debug
 
     assert args.combs         #[(1,5), (5,2), (9,5)]
     combs = [comb.strip() for comb in args.combs.split(";")]
