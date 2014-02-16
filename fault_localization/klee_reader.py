@@ -6,25 +6,26 @@ import shutil
 
 vdebug = False
 
-def instrument_worker(src, sid, xinfo, idxs):
-    #$ ./tf /tmp/cece_1392070907_eedfba/p.c --do_ssid 3 --xinfo z3_c0 --idxs "0 1"
+def instrument_worker(src, sid, template, xinfo, idxs):
+    #$ ./tf /tmp/cece_1392070907_eedfba/p.c --do_ssid 3 --template 1 --xinfo z3_c0 --idxs "0 1"
     
-    if vdebug: print 'KR: *** create {} sid {} xinfo {} idxs {} ***'.format(src,sid,xinfo,idxs)
+    if vdebug: print ('KR: *** create {} sid {} template {} xinfo {} idxs {} ***'
+                      .format(src,template,sid,xinfo,idxs))
     
-    cmd = ('./tf {} --do_ssid {} --xinfo {} --idxs "{}" {}'
-           .format(src,sid,xinfo,idxs,"--debug" if vdebug else ""))
+    cmd = ('./tf {} --do_ssid {} --template {} --xinfo {} --idxs "{}" {}'
+           .format(src,sid,template,xinfo,idxs,"--debug" if vdebug else ""))
                    
     if vdebug: print "$ {}".format(cmd)
     proc = sp.Popen(cmd,shell=True,stdin=sp.PIPE,stdout=sp.PIPE,stderr=sp.PIPE)
     rs,rs_err = proc.communicate()
 
     assert not rs, rs
-    
+
     if "error" in rs_err or "write_src" not in rs_err:
-        print 'something wrong with instrumentation'
+        print 'something wrong with instrumentation !!'
         print cmd
         print rs_err
-        return None
+        raise AssertionError
 
     #get the created file name 
     #write_src: "/tmp/cece_1392071927_eeea2d/p.bug2.c.s3.z3_c5.tf.c"
@@ -118,11 +119,11 @@ def read_klee_worker (src):
     return None
         
 
-def tbf_worker(src, sid, cid, idxs, no_bugfix):
+def tbf_worker(src, sid, template, cid, idxs, no_bugfix):
     idxs = " ".join(map(str,idxs))
-    xinfo = "z{}_c{}".format(len(idxs),cid)
+    xinfo = "t{}_z{}_c{}".format(template,len(idxs),cid)
     
-    r = instrument_worker(src, sid, xinfo, idxs)
+    r = instrument_worker(src, sid, template, xinfo, idxs)
     if r :
         if no_bugfix: 
             return r
@@ -134,17 +135,20 @@ def tbf_worker(src, sid, cid, idxs, no_bugfix):
 
 
 def tbf(src, combs, no_bugfix, no_parallel, no_break):
-    #e.g., combs = [(1,5), (5,2), (9,5)]
+    #e.g., combs = [(1,1,5), (5,2,2), (9,2,5)]
 
     import itertools
     max_comb_siz = 2
 
     combs_ = []
-    for sid,vs_siz in combs:
-        for siz in range(max_comb_siz+1):
-            cs = itertools.combinations(range(vs_siz),siz)
-            for i,c in enumerate(cs):
-                combs_.append((sid,i,list(c)))
+    for sid,template,vs_siz in combs:
+        if template == 3:
+            combs_.append((sid,template,0,[vs_siz]))
+        else:
+            for siz in range(max_comb_siz+1):
+                cs = itertools.combinations(range(vs_siz),siz)
+                for i,c in enumerate(cs):
+                    combs_.append((sid,template,i,list(c)))
                               
 
     # print len(combs_)
@@ -154,7 +158,7 @@ def tbf(src, combs, no_bugfix, no_parallel, no_break):
     def wprocess(tasks,V,Q):
 
         if no_break:
-            rs = [tbf_worker(src,sid,cid,idxs,no_bugfix) for sid,cid,idxs in tasks]
+            rs = [tbf_worker(src,sid,template,cid,idxs,no_bugfix) for sid,template,cid,idxs in tasks]
             if Q is None:
                 return rs
             else:
@@ -164,8 +168,8 @@ def tbf(src, combs, no_bugfix, no_parallel, no_break):
         else: #break after finding a fix 
             rs = []
             if Q is None:  #no multiprocessing
-                for sid,cid,idxs in tasks:
-                    r = tbf_worker(src,sid,cid,idxs,no_bugfix)
+                for sid,template,cid,idxs in tasks:
+                    r = tbf_worker(src,sid,template,cid,idxs,no_bugfix)
                     if r: 
                         if vdebug: print "sol found, break !"
                         rs.append(r)
@@ -173,12 +177,12 @@ def tbf(src, combs, no_bugfix, no_parallel, no_break):
                 return rs
 
             else: #multiprocessing
-                for sid,cid,idxs in tasks:
+                for sid,template,cid,idxs in tasks:
                     if V.value > 0: 
                         if vdebug: print "sol found, break !"
                         break
                     else:
-                        r = tbf_worker(src,sid,cid,idxs,no_bugfix)
+                        r = tbf_worker(src,sid,template,cid,idxs,no_bugfix)
                         if r: 
                             rs.append(r)
                             V.value = 1
@@ -247,7 +251,7 @@ if __name__ == "__main__":
     aparser.add_argument("file", help="src code")
  
     aparser.add_argument("--do_tbf",
-                         help='transform and bug fix, e.g., --do_tbf "(1,5); (5,2); (9,5)"',
+                         help='transform and bug fix, e.g., --do_tbf "(1,1,5); (5,1,2); (9,1,5)"',
                          dest='combs',
                          action="store")
 
@@ -276,7 +280,7 @@ if __name__ == "__main__":
     combs = [comb.strip() for comb in args.combs.split(";")]
     combs = [comb[1:][:-1] for comb in combs] #remove ( )
     combs = [comb.split(',') for comb in combs]
-    combs = [(int(comb[0]),int(comb[1])) for comb in combs]
+    combs = [(int(comb[0]),int(comb[1]),int(comb[2])) for comb in combs]
 
     tbf(args.file, combs, 
         no_bugfix=args.no_bugfix,
