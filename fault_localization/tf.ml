@@ -147,13 +147,6 @@ let tpl_of_id tid = match tid with
   |5 -> TP_BOPS 
   |_ -> E.s(E.error "unknown template id %d" tid)
 
-let level_of_tpl = function 
-  |TP_CONSTS -> 1 
-  |TP2 -> 1
-  |TP_LOGIC_BOPS -> 2
-  |TP_BOPS -> 2
-  |TP_VS -> 3 
-
 
 (* Specific options for this program *)
 let vdebug:bool ref = ref false
@@ -184,9 +177,6 @@ let bool_bops_ht_init () =
       [|Lt; Gt; Le; Ge; Eq; Ne|]
     ]
     
-
-
-
 (******************* Helper Functions *******************)
 let mk_vi ?(ftype=TVoid []) fname: varinfo = makeVarinfo true fname ftype
 
@@ -1317,12 +1307,13 @@ let spy_LOGIC_BOPS: (instr -> 'a option) = function
 
 
 
-class virtual tpl (cname:string) (cid:int) (level:int)= 
-object
+class virtual tpl (cname:string) (cid:int) (level:int) = object
+
   val cname = cname
   val cid = cid
   val level = level
 
+  method cname: string = cname
   method cid : int = cid
   method level: int = level
 
@@ -1330,23 +1321,25 @@ object
 end 
 
 
-class tpl_CONSTS = 
-object(self)
+class tpl_CONSTS = object
   inherit tpl "CONSTS" 3 1 as super
 
   method spy (filename:string) (sid:sid_t) (fd:fundec) = function
   |Set (_,e,_) ->
-    let rec find_const ctr e: int = match e with
+    let rec find_consts ctr e: int = match e with
       |Const _ -> succ ctr
       |Lval _ -> ctr
-      |UnOp(_,e1,_) -> find_const ctr e1
-      |BinOp (_,e1,e2,_) -> find_const ctr e1 + find_const ctr e2
+      |UnOp(_,e1,_) -> find_consts ctr e1
+      |BinOp (_,e1,e2,_) -> find_consts ctr e1 + find_consts ctr e2
 
       | _ -> 
 	ealert "don't know how to deal with exp '%a'" dn_exp e;
     	ctr
     in
-    let n_consts:int = find_const 0 e in
+    let n_consts:int = find_consts 0 e in
+    
+    if !vdebug then E.log "%s: found %d n_consts\n" super#cname n_consts;
+
     if n_consts > 0 then 
       P.sprintf "(%d, %d, %d)" sid super#cid n_consts
     else
@@ -1356,9 +1349,47 @@ object(self)
 
 end
 
+class tpl_BOPS = object(self)
+  inherit tpl "BOPS" 5 2 as super
 
-class tpl_VS = 
-object(self)
+  val ops_ht:(binop, binop array) H.t = H.create 128
+  initializer
+    L.iter(fun bl -> A.iter (fun b -> H.add ops_ht b bl) bl)
+      [
+	[|LAnd; LOr|];
+	[|Lt; Gt; Le; Ge; Eq; Ne|]
+      ];
+      
+    E.log "%s: create bops ht" super#cname
+
+  method spy (filename:string) (sid:sid_t) (fd:fundec) = function
+  |Set (_,e,_) ->
+    let rec find_ops l e: binop list = match e with
+      |Const _ -> l
+      |Lval  _ -> l
+      |UnOp(_,e1,_) -> find_ops l e1
+      |BinOp (bop,e1,e2,_) when H.mem ops_ht bop -> 
+	[bop]@(find_ops l e1)@(find_ops l e2)
+      | _ ->
+    	ealert "don't know how to deal with exp '%a'" dn_exp e;
+	l
+    in
+    let ops = find_ops [] e in
+    let len = L.length ops in 
+
+    if !vdebug then E.log "%s: found %d ops [%s]\n" 
+      super#cname len (string_of_list (L.map string_of_binop ops));
+
+    if len > 0 then
+      P.sprintf "(%d, %d, %d)" sid super#cid len
+    else
+      ""
+
+  |_ -> ""
+
+end
+
+class tpl_VS = object
   inherit tpl "VS" 1 3 as super
 
   method spy (filename:string) (sid:sid_t) (fd:fundec)  = function
@@ -1383,14 +1414,14 @@ object(self)
     let len = L.length vs in
     
     if !vdebug then (
-      let vs_names =String.concat ", " (L.map (fun vi -> vi.vname) vs) in
-      E.log "Using %d/%d avail vars in fun %s\n[%s]\n"
-    	len (L.length vs') fd.svar.vname vs_names
+      E.log "%s: found %d/%d avail vars in fun %s [%s]\n"
+    	super#cname len (L.length vs') fd.svar.vname 
+	(String.concat ", " (L.map (fun vi -> vi.vname) vs))
     );
     
-    if L.length vs > 0 then(
+    if len > 0 then(
       write_file_bin (arr_s filename sid super#cid) (A.of_list vs);
-      P.sprintf "(%d, %d, %d)" sid super#cid (L.length vs)
+      P.sprintf "(%d, %d, %d)" sid super#cid len
     ) else ""
 
   |_ -> ""
@@ -1400,6 +1431,7 @@ end
 
 let tpl_classes:tpl list = 
   [(new tpl_CONSTS:> tpl); 
+   (new tpl_BOPS:> tpl); 
    (new tpl_VS:> tpl)]
 
 
@@ -1436,7 +1468,6 @@ let tbf
     (filename:string) 
     (mainQ:fundec) 
     (ssids:sid_t list)
-    (tcs:testcase list)
     (stmt_ht:(int,stmt*fundec) H.t)
     (bf_tpls:int list)
     : string list =
@@ -1453,7 +1484,7 @@ let tbf
   let rs = L.map (spy bf_tpls filename stmt_ht) ssids in
   let rs' = L.filter (function |[] -> false |_ -> true) rs in
   let rs = L.filter (fun c -> c <> "") (L.flatten rs') in
-  ealert "Spy: Got %d info from %d ssids" (L.length rs) (L.length rs');
+  ealert "Spy: Got %d infos from %d ssids" (L.length rs) (L.length rs');
   
   if (L.length rs) < 1 then(
     ealert "No stmts for transformation .. Exiting\n";
@@ -1652,7 +1683,8 @@ let () = begin
   write_src (ast.fileName ^ ".preproc.c") ast;
   write_file_bin (ginfo_s ast.fileName) (ast,mainQ_fd,tcs); 
   
-  let rs = tbf ast.fileName mainQ_fd ssids tcs stmt_ht  
+  
+  let rs = tbf ast.fileName mainQ_fd ssids stmt_ht  
     (L.map int_of_string (str_split !bf_tpls)) in
 
   if !only_spy then exit 0;
