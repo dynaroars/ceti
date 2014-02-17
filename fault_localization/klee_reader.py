@@ -6,25 +6,24 @@ import shutil
 
 vdebug = False
 
-def instrument_worker(src, sid, template, xinfo, idxs):
-    #$ ./tf /tmp/cece_1392070907_eedfba/p.c --do_ssid 3 --template 1 --xinfo z3_c0 --idxs "0 1"
+def instrument_worker(src, sid, tpl, xinfo, idxs):
+    #$ ./tf /tmp/cece_1392070907_eedfba/p.c --do_ssid 3 --tpl 1 --xinfo z3_c0 --idxs "0 1"
     
-    if vdebug: print ('KR: *** create {} sid {} template {} xinfo {} idxs {} ***'
-                      .format(src,template,sid,xinfo,idxs))
+    if vdebug: print ('KR: *** create {} sid {} tpl {} xinfo {} idxs {} ***'
+                      .format(src,tpl,sid,xinfo,idxs))
     
-    cmd = ('./tf {} --do_ssid {} --template {} --xinfo {} --idxs "{}" {}'
-           .format(src,sid,template,xinfo,idxs,"--debug" if vdebug else ""))
+    cmd = ('./tf {} --do_ssid {} --tpl {} --xinfo {} --idxs "{}" {}'
+           .format(src,sid,tpl,xinfo,idxs,"--debug" if vdebug else ""))
                    
     if vdebug: print "$ {}".format(cmd)
     proc = sp.Popen(cmd,shell=True,stdin=sp.PIPE,stdout=sp.PIPE,stderr=sp.PIPE)
     rs,rs_err = proc.communicate()
 
     assert not rs, rs
+    print rs_err
 
     if "error" in rs_err or "write_src" not in rs_err:
-        print 'something wrong with instrumentation !!'
-        print cmd
-        print rs_err
+        print "instrumentation failed '{}' !!".format(cmd)
         raise AssertionError
 
     #get the created file name 
@@ -34,8 +33,6 @@ def instrument_worker(src, sid, template, xinfo, idxs):
         if "write_src:" in line: 
             rs_file = line[line.find(':')+1:].strip()[1:][:-1]
             break
-
-    if vdebug: print rs_err
         
     return rs_file
 
@@ -87,13 +84,14 @@ def read_klee_worker (src):
         line = proc.stdout.readline()
         line = line.strip()
         if line:
+            sys.stdout.flush()
             if all(x not in line for x in ignores_run + ignores_done):
                 if vdebug: print 'stdout:', line
                 
             if "KLEE: ERROR" in line and "ASSERTION FAIL: 0" in line: 
-                #print 'GOT IT'
+                print "FIX FOUND for '{}'".format(src)
                 break
-        #sys.stdout.flush()
+        
             
     rs,rs_err = proc.communicate()
 
@@ -119,11 +117,11 @@ def read_klee_worker (src):
     return None
         
 
-def tbf_worker(src, sid, template, cid, idxs, no_bugfix):
+def tbf_worker(src, sid, tpl, cid, idxs, no_bugfix):
     idxs = " ".join(map(str,idxs))
-    xinfo = "t{}_z{}_c{}".format(template,len(idxs),cid)
-    
-    r = instrument_worker(src, sid, template, xinfo, idxs)
+    xinfo = "t{}_z{}_c{}".format(tpl,len(idxs),cid)
+
+    r = instrument_worker(src, sid, tpl, xinfo, idxs)
     if r :
         if no_bugfix: 
             return r
@@ -137,18 +135,20 @@ def tbf_worker(src, sid, template, cid, idxs, no_bugfix):
 def tbf(src, combs, no_bugfix, no_parallel, no_break):
     #e.g., combs = [(1,1,5), (5,2,2), (9,2,5)]
 
+   
     import itertools
     max_comb_siz = 2
 
     combs_ = []
-    for sid,template,vs_siz in combs:
-        if template == 3:
-            combs_.append((sid,template,0,[vs_siz]))
+    for sid,tpl,vs_siz in combs:
+        if tpl in [3,4]:
+            combs_.append((sid,tpl,0,[vs_siz]))
+
         else:
             for siz in range(max_comb_siz+1):
                 cs = itertools.combinations(range(vs_siz),siz)
                 for i,c in enumerate(cs):
-                    combs_.append((sid,template,i,list(c)))
+                    combs_.append((sid,tpl,i,list(c)))
                               
 
     # print len(combs_)
@@ -158,7 +158,7 @@ def tbf(src, combs, no_bugfix, no_parallel, no_break):
     def wprocess(tasks,V,Q):
 
         if no_break:
-            rs = [tbf_worker(src,sid,template,cid,idxs,no_bugfix) for sid,template,cid,idxs in tasks]
+            rs = [tbf_worker(src,sid,tpl,cid,idxs,no_bugfix) for sid,tpl,cid,idxs in tasks]
             if Q is None:
                 return rs
             else:
@@ -168,8 +168,8 @@ def tbf(src, combs, no_bugfix, no_parallel, no_break):
         else: #break after finding a fix 
             rs = []
             if Q is None:  #no multiprocessing
-                for sid,template,cid,idxs in tasks:
-                    r = tbf_worker(src,sid,template,cid,idxs,no_bugfix)
+                for sid,tpl,cid,idxs in tasks:
+                    r = tbf_worker(src,sid,tpl,cid,idxs,no_bugfix)
                     if r: 
                         if vdebug: print "sol found, break !"
                         rs.append(r)
@@ -177,12 +177,12 @@ def tbf(src, combs, no_bugfix, no_parallel, no_break):
                 return rs
 
             else: #multiprocessing
-                for sid,template,cid,idxs in tasks:
+                for sid,tpl,cid,idxs in tasks:
                     if V.value > 0: 
                         if vdebug: print "sol found, break !"
                         break
                     else:
-                        r = tbf_worker(src,sid,template,cid,idxs,no_bugfix)
+                        r = tbf_worker(src,sid,tpl,cid,idxs,no_bugfix)
                         if r: 
                             rs.append(r)
                             V.value = 1
