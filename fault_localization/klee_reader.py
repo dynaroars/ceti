@@ -7,20 +7,21 @@ import shutil
 vdebug = False
 
 def instrument_worker(src, sid, tpl, xinfo, idxs):
-    #$ ./tf /tmp/cece_1392070907_eedfba/p.c --do_ssid 3 --tpl 1 --xinfo z3_c0 --idxs "0 1"
+    #$ ./tf /tmp/cece_1392070907_eedfba/p.c 
+    #--do_standalone --ssid 3 --tpl 1 --xinfo z3_c0 --idxs "0 1"
     
     if vdebug: print ('KR: *** create {} sid {} tpl {} xinfo {} idxs {} ***'
                       .format(src,tpl,sid,xinfo,idxs))
     
-    cmd = ('./tf {} --do_ssid {} --tpl {} --xinfo {} --idxs "{}" {}'
-           .format(src,sid,tpl,xinfo,idxs,"--debug" if vdebug else ""))
+    cmd = ('./tf {} --do_standalone --ssid {} --tpl {} --idxs "{}" --xinfo {}{}'
+           .format(src,sid,tpl,idxs,xinfo, " --debug" if vdebug else ""))
                    
     if vdebug: print "$ {}".format(cmd)
     proc = sp.Popen(cmd,shell=True,stdin=sp.PIPE,stdout=sp.PIPE,stderr=sp.PIPE)
     rs,rs_err = proc.communicate()
 
     assert not rs, rs
-    print rs_err
+    if vdebug: print rs_err
 
     if "error" in rs_err or "write_src" not in rs_err:
         print "instrumentation failed '{}' !!".format(cmd)
@@ -28,13 +29,23 @@ def instrument_worker(src, sid, tpl, xinfo, idxs):
 
     #get the created file name 
     #write_src: "/tmp/cece_1392071927_eeea2d/p.bug2.c.s3.z3_c5.tf.c"
+    #Alert: Transform success: @@ '/tmp/cece_4b2065/q.bug2.c.s1.t5_z3_c1.tf.c' @@  __cil_tmp4 = (x || y) || z; @@ __cil_tmp4 = (x || y) && z;
+
     rs_file = ""
+    old_stmt = ""
+    new_stmt = ""
+
     for line in rs_err.split("\n"):
-        if "write_src:" in line: 
-            rs_file = line[line.find(':')+1:].strip()[1:][:-1]
+        if "success:" in line: 
+            line = line.split("##")
+            assert len(line) == 4
+            line = [l.strip() for l in line[1:]]
+            rs_file = line[0][1:][:-1]
+            old_stmt = line[1]
+            new_stmt = line[2]
             break
         
-    return rs_file
+    return rs_file,old_stmt,new_stmt
 
 #compile file then run klee on the resulting object file
 def read_klee_worker (src):
@@ -87,9 +98,9 @@ def read_klee_worker (src):
             sys.stdout.flush()
             if all(x not in line for x in ignores_run + ignores_done):
                 if vdebug: print 'stdout:', line
-                
+
+            
             if "KLEE: ERROR" in line and "ASSERTION FAIL: 0" in line: 
-                print "FIX FOUND for '{}'".format(src)
                 break
         
             
@@ -109,10 +120,8 @@ def read_klee_worker (src):
                 #GOAL: uk_0 0, uk_1 0, uk_2 1
                 if 'GOAL' in line:
                     s = line[line.find(':')+1:].strip()
-                    s = 'fix {}: {}'.format(src,s)
-                    print s
+                    s = '{}'.format(s if s else "no uks")
                     return s
-
 
     return None
         
@@ -122,12 +131,17 @@ def tbf_worker(src, sid, tpl, cid, idxs, no_bugfix):
     xinfo = "t{}_z{}_c{}".format(tpl,len(idxs),cid)
 
     r = instrument_worker(src, sid, tpl, xinfo, idxs)
-    if r :
+    assert len(r) == 3
+    fn,old_stmt,new_stmt = r
+
+    if fn : #transform success
         if no_bugfix: 
-            return r
+            return "{}, {}, {}".format(fn,old_stmt,new_stmt)
         else:
-            r = read_klee_worker(r)
-            return r
+            rk_r = read_klee_worker(fn)
+            if rk_r:
+                return "{}: {} ===> {} ===> {}".format(fn,old_stmt,new_stmt,rk_r)
+            
 
     return None
 
@@ -140,15 +154,27 @@ def tbf(src, combs, no_bugfix, no_parallel, no_break):
     max_comb_siz = 2
 
     combs_ = []
-    for sid,tpl,vs_siz in combs:
-        if tpl in [3,4]:
-            combs_.append((sid,tpl,0,[vs_siz]))
-
-        else:
+    for sid,tpl,l in combs:
+        if tpl == 1: #VS
+            assert len(l) == 1, len(l)
+            l = l[0]
             for siz in range(max_comb_siz+1):
-                cs = itertools.combinations(range(vs_siz),siz)
+                cs = itertools.combinations(range(l),siz)
                 for i,c in enumerate(cs):
                     combs_.append((sid,tpl,i,list(c)))
+
+        elif tpl == 5:  #BOPS
+            ls = [range(l_) for l_ in l]
+            cs = itertools.product(*ls)
+            for i,c in enumerate(cs):
+                combs_.append((sid,tpl,i,list(c)))
+
+        elif tpl == 3: #CONST
+            assert len(l) == 1, len(l)
+            combs_.append((sid,tpl,0,l))
+
+        else:
+            assert False, "unknown template id {}".format(tpl)
                               
 
     # print len(combs_)
@@ -158,7 +184,8 @@ def tbf(src, combs, no_bugfix, no_parallel, no_break):
     def wprocess(tasks,V,Q):
 
         if no_break:
-            rs = [tbf_worker(src,sid,tpl,cid,idxs,no_bugfix) for sid,tpl,cid,idxs in tasks]
+            rs = [tbf_worker(src,sid,tpl,cid,idxs,no_bugfix) 
+                  for sid,tpl,cid,idxs in tasks]
             if Q is None:
                 return rs
             else:
@@ -230,19 +257,23 @@ def tbf(src, combs, no_bugfix, no_parallel, no_break):
             wrs.extend(Q.get())
         
 
-            
-
     wrs = [r for r in wrs if r]
-    print ("===== KR summary (bugfix: {}, parallel: {}, break: {}):"\
-               "'{}', tbf {} / {} ====="
+    print ("KR summary (bugfix: {}, parallel: {}, break: {}):"\
+               "'{}', tbf {} / {}"
            .format(not no_bugfix, 
                    not no_parallel, 
                    not no_break,
                    src,len(wrs),len(tasks)))
 
     for i,r in enumerate(wrs):
-        print "{}. {}".format(i,r)
+        print "{}. {}".format(i+1,r)
 
+
+#template 1: VS
+#(tpl_id,ssid,vsize) where vsize is th length of available variables where we'll create a bunch of combinations from
+
+#template 3: CONSTS
+#(tpl_id,ssid,n_const) where nconsts is the # consts , won't do anything with this number
 
 if __name__ == "__main__":
     import argparse
@@ -260,7 +291,7 @@ if __name__ == "__main__":
                          action="store_true")
 
     aparser.add_argument("--no_bugfix",
-                         help="don't run klee to find fix",
+                         help="don't run klee to find fixes",
                          action="store_true")
 
     aparser.add_argument("--no_break",
@@ -280,7 +311,11 @@ if __name__ == "__main__":
     combs = [comb.strip() for comb in args.combs.split(";")]
     combs = [comb[1:][:-1] for comb in combs] #remove ( )
     combs = [comb.split(',') for comb in combs]
-    combs = [(int(comb[0]),int(comb[1]),int(comb[2])) for comb in combs]
+
+
+    combs = [(int(comb[0]),int(comb[1]),
+              [int(c) for c in comb[2].strip().split()])
+             for comb in combs]
 
     tbf(args.file, combs, 
         no_bugfix=args.no_bugfix,

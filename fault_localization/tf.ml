@@ -7,6 +7,7 @@ module A = Array
 module H = Hashtbl 
 module P = Printf
 
+
 let strip s =
   let is_space = function
     | ' ' | '\012' | '\n' | '\r' | '\t' -> true
@@ -137,24 +138,11 @@ type inp_t = int list
 type outp_t = int 
 type testcase = inp_t * outp_t
 type sid_t = int
-type tpl_t = TP_VS | TP2 | TP_CONSTS  | TP_LOGIC_BOPS |TP_BOPS
-let id_of_tpl = function |TP_VS -> 1 |TP2 -> 2 | TP_CONSTS -> 3 | TP_LOGIC_BOPS -> 4 | TP_BOPS -> 5
-let tpl_of_id tid = match tid with 
-  |1 -> TP_VS 
-  |2 -> TP2 
-  |3 -> TP_CONSTS 
-  |4 -> TP_LOGIC_BOPS 
-  |5 -> TP_BOPS 
-  |_ -> E.s(E.error "unknown template id %d" tid)
-
 
 (* Specific options for this program *)
 let vdebug:bool ref = ref false
 let dlog s = if !vdebug then E.log "%s" s else ()
 let dalert s = if !vdebug then ealert "%s" s else ()
-
-let bf_template_ids: int list ref = ref []  (*use these bug fixtemplate ids*)
-
 
 let uk_const_min:int = -100000
 let uk_const_max:int =  100000
@@ -163,21 +151,22 @@ let uk_max :int =  1
 
 let min_sscore:float ref = ref 0.5
 let top_n_ssids:int ref = ref 10
-let tpl_level:int ref = ref 3
+let tpl_ids:int list ref = ref [] (*apply only these specific template ids*)
+let tpl_level:int ref = ref 3 (*apply only templates with <= levels*)
 let extra_vars:varinfo list ref = ref []
 
-let bool_bops_ht:(binop, binop array) H.t = H.create 128
-let bool_bops_ht_init () = 
-  (*operators that return boolean,  xor, bit and/or are not part of these*)
-  L.iter(fun bl ->
-    A.iter (fun b -> H.add bool_bops_ht b bl) bl
-  )
-    [
-      [|LAnd; LOr|];
-      [|Lt; Gt; Le; Ge; Eq; Ne|]
-    ]
-    
 (******************* Helper Functions *******************)
+let find_fun (ast:file) (funname:string) : fundec = 
+  let fd = ref None in
+  iterGlobals ast (function 
+  |GFun(f,_) when f.svar.vname = funname -> fd := Some f
+  |_ -> ()
+  );
+  match !fd with
+  |Some f -> f
+  |None -> E.s (E.error "fun '%s' not in '%s'!" funname ast.fileName)
+
+
 let mk_vi ?(ftype=TVoid []) fname: varinfo = makeVarinfo true fname ftype
 
 (*av = fname(args)*)
@@ -190,8 +179,9 @@ let exp_of_vi (vi:varinfo): exp = Lval (var vi)
 let string_of_stmt (s:stmt) = Pretty.sprint ~width:80 (dn_stmt () s) 
 let string_of_exp (s:exp) = Pretty.sprint ~width:80 (dn_exp () s) 
 let string_of_instr (s:instr) = Pretty.sprint ~width:80 (dn_instr () s) 
+let string_of_lv (s:lval) = Pretty.sprint ~width:80 (dn_lval () s) 
 let string_of_list =   String.concat ", " 
-
+let string_of_int_list (l:int list): string = string_of_list (L.map string_of_int l)
 
 let string_of_binop = function
   |Lt -> "<"
@@ -211,6 +201,11 @@ let string_of_binop = function
   |Shiftrt -> ">>"
     
   |_ -> E.s (E.error "unknown binop")
+
+let string_of_unop = function
+  |Neg -> "unary -"
+  |BNot -> "~"
+  |LNot -> "!"
   
 
 (*gcc filename.c;  return "filename.exe" if success else None*)
@@ -241,31 +236,9 @@ let read_lines (filename:string) :string list =
 let apply_binop (op:binop) (exps:exp list): exp = 
   assert (L.length exps > 0);
   let e0 = L.hd exps in 
-  let tE = typeOf e0 in
-  L.fold_left (fun e e' -> BinOp(op,e,e',tE)) e0 (L.tl exps)
+  let ty = typeOf e0 in
+  L.fold_left (fun e e' -> BinOp(op,e,e',ty)) e0 (L.tl exps)
 
-(*
-  apply a list of ops, e.g., 
-  apply_bops x y + * [v1;v2] [<; =; >] gives
-  (v1 * (e1 < e2)) + (v2* (e1 = e2)) + (v3 * (e1 > e2))
-*)
-let apply_bops 
-    ?(o1:binop=PlusA) ?(o2:binop=Mult) 
-    (e1:exp) (e2:exp) 
-    (uks:exp list) (ops:binop list) :exp =
-
-  assert (L.length uks > 0);
-  assert (L.length uks = L.length ops);
-  
-  let uk0, uks = L.hd uks, L.tl uks in
-  let op0, ops = L.hd ops, L.tl ops in 
-
-  let a = BinOp(o2,uk0,BinOp(op0,e1,e2,intType),intType) in
-  let tE = typeOf a in
-  L.fold_left2 (fun a op uk ->
-    BinOp(o1,a,BinOp(o2, uk, BinOp (op,e1,e2,intType), intType),tE)
-  ) a ops uks
-    
 
 let isSimpleExp = function
   | Const _ 
@@ -389,6 +362,16 @@ class breakCondVisitor = object(self)
 
 	  |_ -> [s]
 	)
+	  (*x = a?b:c  -> if(a){x=b}{x=c} *)
+	|Instr [Set (lv,Question (e1,e2,e3,ty),loc)] -> 
+	  let s1:instr = Set(lv,e2,loc) in
+	  let s2:instr = Set(lv,e3,loc) in
+	  let sk = If (e1, 
+		       mkBlock [mkStmtOneInstr s1], 
+		       mkBlock [mkStmtOneInstr s2], loc) in
+	  let s' = mkStmt sk in
+	  [s']
+
 
 	|_ -> [s]
       in
@@ -539,11 +522,11 @@ let get_goodbad_tcs (filename:string) (tcs:(int list * int) list)  =
   fprintf "_coverage_fout, sid"; 
   fflush();
 *)
-let stderr_va = mk_vi ~ftype:(TPtr(TVoid [], [])) "_coverage_fout"
+let stderr_vi = mk_vi ~ftype:(TPtr(TVoid [], [])) "_coverage_fout"
 
 let create_fprintf_stmt (sid : sid_t) :stmt = 
   let str = P.sprintf "%d\n" sid in
-  let stderr = exp_of_vi stderr_va in
+  let stderr = exp_of_vi stderr_vi in
   let instr1 = mk_call "fprintf" [stderr; Const (CStr(str))] in 
   let instr2 = mk_call "fflush" [stderr] in
   mkStmt (Instr([instr1; instr2]))
@@ -581,10 +564,10 @@ let coverage (ast:file) (filename_cov:string) (filename_path:string) =
   (*add to global
     _coverage_fout = fopen("file.c.path", "ab");
   *)
-  let new_global = GVarDecl(stderr_va, !currentLoc) in
+  let new_global = GVarDecl(stderr_vi, !currentLoc) in
   ast.globals <- new_global :: ast.globals;
 
-  let lhs = var(stderr_va) in
+  let lhs = var(stderr_vi) in
   let arg1 = Const(CStr(filename_path)) in
   let arg2 = Const(CStr("ab")) in
   let instr = mk_call ~av:(Some lhs) "fopen" [arg1; arg2] in
@@ -720,431 +703,46 @@ let fault_loc (ast:file) (goods:testcase list) (bads:testcase list)
   
   L.map fst sscores
 
-(******************* Tpls for file transformation *******************)
+(******************* For debugging a Cil construct *******************)
 
-(*Instrument main function*)
-class modMainVisitor 
-  (mainQ_fd:fundec) 
-  (n_uks:int) 
-  (tcs:testcase list) 
-  (uks:varinfo list ref)
-  (tpl:tpl_t)
-  = object(self)
-
-  inherit nopCilVisitor
-
-  method mk_uk (main_fd:fundec) (uid:int) (min_max_v:int*int): 
-    (varinfo*lval) * (instr list) = 
-
-    let vname = ("uk_" ^ string_of_int uid) in 
+let rec peek_exp e: string = 
+  match e with 
+  |Const _ -> "Cconst"
+  |Lval lv -> string_of_lv lv
+  |SizeOf _ -> "SizeOf"
+  |SizeOfE _ -> "SizeOfE"
+  |SizeOfStr _ -> "SizeOfStr"    
+  |AlignOf _ -> "AlignOf"
+  |AlignOfE _ -> "AlignOfE"
+  |UnOp (uop,e',_) -> P.sprintf "%s (%s)" (string_of_unop uop) (peek_exp e)
+  |BinOp (bop,e1,e2,_) -> 
+    P.sprintf "%s %s %s" (peek_exp e1) (string_of_binop bop) (peek_exp e2)
+  |Question _ -> "Question"
+  |CastE _ -> "CastE"
+  |AddrOf _-> "AddrOf"
+  |AddrOfLabel _-> "AddrOfLabel"
+  |StartOf _ -> "StartOf"
     
-    (*declare uks*)
-    let vi:varinfo = makeLocalVar main_fd vname intType in 
-    let lv:lval = var vi in 
+and peek_instr ins: string = 
+  match ins with 
+  |Set(lv,e,_) -> P.sprintf "%s = %s" (string_of_lv lv) (peek_exp e)
+  |Call _ -> "Call"
+  |_ -> "(unimp instr: "  ^ string_of_instr ins ^ ")"
     
-    (*klee_make_symbolic(&uk,sizeof(uk),"uk") *)
-    let mk_sym_instr:instr = mk_call "klee_make_symbolic" 
-      [mkAddrOf(lv); SizeOfE(Lval lv); Const (CStr vname)] in
-    
-    let min_v,max_v = min_max_v in 
-    let klee_assert_lb:instr = mk_call "klee_assume" 
-      [BinOp(Le,integer min_v,Lval lv, boolTyp)] in 
-
-    let klee_assert_ub:instr = mk_call "klee_assume" 
-      [BinOp(Le,Lval lv, integer max_v, boolTyp)] in 
-    
-    (vi,lv), [mk_sym_instr;  klee_assert_lb; klee_assert_ub]
-
-  (*creates reachability "goal" statement 
-    if(e_1,..,e_n){printf("GOAL: uk0 %d, uk1 %d ..\n",uk0,uk1);klee_assert(0);}
-  *)
-  method mk_goal (exps:exp list) (uks_exps:exp list):stmtkind = 
-   
-    (*printf("GOAL: uk0 %d uk1 %d .. \n",uk0,uk1,..); *)
-    let str = L.map (
-      function
-      |Lval (Var vi,_) -> vi.vname ^ " %d"
-      |_ -> failwith "not poss: uk must be Lval .."
-    ) uks_exps in
-    let str = "GOAL: " ^ (String.concat ", " str) ^ "\n" in 
-    let print_goal:instr = mk_call "printf" ([Const(CStr(str))]@uks_exps) in 
-    
-    (*klee_assert(0);*)
-    let klee_assert_zero:instr = mk_call "klee_assert" [zero] in 
-    
-    let and_exps = apply_binop LAnd exps in
-    If(and_exps, 
-       mkBlock [mkStmt (Instr([print_goal; klee_assert_zero]))], 
-       mkBlock [], 
-       !currentLoc) 
-
-
-  (*make calls to mainQ on test inp/oupt:
-    mainQ_typ temp;
-    temp = mainQ(inp0,inp1,..);
-    temp == outp
-  *)
-  method mk_mainQ_call (main_fd:fundec) (tc:testcase) = 
-
-    let mainQ_typ:typ = match mainQ_fd.svar.vtype with 
-      |TFun(t,_,_,_) -> t
-      |_ -> E.s(E.error "%s is not fun typ %a\n" 
-		  mainQ_fd.svar.vname d_type mainQ_fd.svar.vtype)
-    in
-
-    let inps,outp = tc in
-    
-    (*mainQ_typ temp;*)
-    let temp:lval = var(makeTempVar main_fd mainQ_typ) in 
-    
-    (*tmp = mainQ(inp, uks);*)
-    (*todo: should be the types of mainQ inps , not integer*)
-    let args = L.map integer inps in 
-    let i:instr = mk_call ~ftype:mainQ_typ ~av:(Some temp) "mainQ" args in
-    
-    (*mk tmp == outp*)
-    (*todo: should convert outp according to mainQ type*)
-    let e:exp = BinOp(Eq,Lval temp,integer outp, boolTyp) in 
-    i,e      
-      
-  method mk_main (main_fd:fundec) : (varinfo list * stmt list) =
-
-    let (min_max_f:int -> int*int), (xcstrs_f:exp list -> instr list) = 
-      match tpl with
-      |TP_VS -> 
-	(function |0 -> uk_const_min, uk_const_max |_ -> uk_min,uk_max ), 
-	(fun _ -> [])
-
-      |TP2 -> 
-	(fun _ -> 0,1), (*boolean vars*)
-	(fun uks ->  (*xor uks, i.e., ^(uk0,uk1,..)*)
-	  let xor_exp = apply_binop BXor uks in 
-	  let klee_assert_xor:instr = mk_call "klee_assume" [xor_exp] in
-	  [klee_assert_xor])
-
-
-      |TP_CONSTS -> 
-	(fun _ -> uk_const_min, uk_const_max), (*const uk*)
-	(fun _ -> [])
-
-      |TP_LOGIC_BOPS -> 
-	(fun _ -> 0,1), (*boolean vars*)
-	(fun uks ->  (*xor uks, i.e., ^(uk0,uk1,..)*)
-	  let xor_exp = apply_binop BXor uks in 
-	  let klee_assert_xor:instr = mk_call "klee_assume" [xor_exp] in
-	  [klee_assert_xor])
-
-
-      |TP_BOPS -> 
-	(fun _ -> 0,1), (*boolean vars*)
-	(fun _ -> [])
-
-    in
-
-    (*declare uks*)
-    let uks, (instrs1:instr list list) = 
-      L.split(L.map (fun uid -> 
-	self#mk_uk main_fd uid (min_max_f uid)) (range n_uks)
-      ) in 
-
-    let instrs1 = L.flatten instrs1 in 
-    let (uks_vi:varinfo list), (uks_lv: lval list) = L.split uks in 
-    let uks_exps = L.map (fun lv -> Lval lv) uks_lv in 
-    let instrs1 = instrs1@(xcstrs_f uks_exps) in
-
-    (*make big if goal *)
-    let instrs2,exps = L.split (L.map (self#mk_mainQ_call main_fd) tcs) in
-    let if_skind:stmtkind = self#mk_goal exps uks_exps in
-    let instrs_skind:stmtkind = Instr(instrs1@instrs2) in
-
-    uks_vi, [mkStmt instrs_skind; mkStmt if_skind]
-
-
-  method vfunc fd =
-    let action(fd:fundec) : fundec =
-      if fd.svar.vname = "main" then (
-	let uks',stmts = self#mk_main fd in
-	(*fd.sbody.bstmts <- stmts @ fd.sbody.bstmts;*)
-	fd.sbody.bstmts <- stmts;
-	uks := uks' 
-      );
-      fd
-    in
-    ChangeDoChildrenPost(fd,action)
-end
-
-
-(*from  stmt x = .. , vs = [v1,..,vn], uks =[u0,..,vn] returns
-  uk0 + u1*v1 + .. + un*vn =>
-*)
-class modStmtVisitor_VS
-  (ssid:int) 
-  (vs:varinfo list) 
-  (uks:exp list) 
-  (modified:bool ref) = object(self)
-
-  inherit nopCilVisitor
-
-  method mk_instr (a_i:instr): instr = 
-    match a_i with 
-    |Set(v,_,l)->
-      assert (L.length vs + 1  = L.length uks);
-      let vs = L.map exp_of_vi vs in 
-      let uk0,uks' = (L.hd uks), (L.tl uks) in 
-      let r_exp = L.fold_left2 (fun a x y -> 
-	BinOp(PlusA, a, BinOp(Mult, x, y, intType), typeOf uk0))
-	uk0 uks' vs in
-      Set(v,r_exp,l)
-    |_ -> E.s(E.error "unexp assignment instr %a" d_instr a_i)
-
- 
-  method vstmt (s:stmt) = 
-    let action (s: stmt) :stmt = 
-      (match s.skind with 
-      |Instr instrs when s.sid = ssid & L.length instrs = 1 ->
-	let old_i = L.hd instrs in 
-	let new_i = self#mk_instr old_i in
-	s.skind <- Instr [new_i];
-	modified := true;
-
-	if !vdebug then 
-	  E.log "Change to '%s' from '%s'\n" (string_of_instr new_i) (string_of_instr old_i)
-
-      |_ -> ()
-      );
-      s
-    in
-    ChangeDoChildrenPost(s, action)
-end      
-let msv_VS = new modStmtVisitor_VS
-
-
-(*from  stmt x = e1 = e2 returns
-  [<=; <] [uk0; uk1, uk2] e1 e2 returns 
-  [e1 <= e2; e1 < e2] =>
-  uk0 + uk1*(e1 <= e2) + uk2*(e1 < e2) =>
-  also insert the constraint only one of uk's can be 1, i.e., uk0^uk1^uk2^uk3
-*)
-
-class modStmtVisitor2
-  (ssid:int) 
-  (bops:binop list) 
-  (uks:exp list) 
-  (modified:bool ref) = object(self)
-
-  inherit nopCilVisitor
-
-  method mk_instr (a_i:instr) : instr =
-    match a_i with
-    |Set(v,BinOp (bo,e1,e2,_),l) ->
-      assert (L.length bops + 1 = L.length uks);
-      let uk0,uks' = (L.hd uks), (L.tl uks) in
-      let r_exp = L.fold_left2 (fun a bop uk ->
-  	BinOp(PlusA,a,BinOp(Mult, uk, BinOp (bop,e1,e2,intType), intType),intType)
-      ) uk0 bops uks' in
-      Set(v,r_exp,l)
-    |_ -> E.s(E.error "unexp assignment instr %a" d_instr a_i)
- 
-  method vstmt (s:stmt) = 
-    let action (s: stmt) :stmt = 
-      (match s.skind with 
-      |Instr instrs when s.sid = ssid & L.length instrs = 1 ->
-	let old_i = L.hd instrs in 
-	let new_i = self#mk_instr old_i in
-	if !vdebug then 
-	  E.log "Change to '%s' from '%s'\n" (string_of_instr new_i) (string_of_instr old_i);
-	s.skind <- Instr [new_i];
-	modified := true
-      |_ -> ()
-      );
-      s
-    in
-    ChangeDoChildrenPost(s, action)
-end      
-
-
-let logic_bops = [LAnd; LOr]
-class modStmtVisitor_LOGIC_BOPS
-  (ssid:int) 
-  (uks:exp list) 
-  (modified:bool ref) = object(self)
-
-  inherit nopCilVisitor
-
-  method mk_exp (e:exp) = 
-    let uks:exp array = A.of_list(uks) in
-    let idx = ref 0 in
-    let rec find_ops e = match e with
-      |Const _ -> e
-      |Lval _ -> e
-      |UnOp(uop,e1,tE) -> UnOp(uop,find_ops e1,tE)
-      |BinOp (bop,e1,e2,_) when L.mem bop logic_bops -> 
-	let e1' = find_ops e1 in
-	let e2' = find_ops e2 in
-	let len_ops = L.length logic_bops in
-	let uks':exp array = A.sub uks !idx len_ops in
-	idx  :=  !idx + len_ops;
-
-	apply_bops e1' e2' (A.to_list uks') logic_bops
-
-      | _ -> ealert "don't know how to deal with exp '%a'" dn_exp e;
-	e
-    in
-    let r_exp = find_ops e in 
-    assert (!idx = A.length uks); (*make sure that # of consts = uks*)
-    r_exp
-    
-
-  method mk_instr (a_i:instr) : instr =
-    match a_i with
-    |Set(v,e,l) -> Set(v, self#mk_exp e, l)
-
-    |_ -> E.s(E.error "unexp assignment instr %a" d_instr a_i)
- 
-  method vstmt (s:stmt) = 
-    let action (s: stmt) :stmt = 
-      (match s.skind with 
-      |Instr instrs when s.sid = ssid & L.length instrs = 1 ->
-	let old_i = L.hd instrs in 
-	let new_i = self#mk_instr old_i in
-	if !vdebug then 
-	  E.log "Change to '%s' from '%s'\n" (string_of_instr new_i) (string_of_instr old_i);
-	s.skind <- Instr [new_i];
-	modified := true
-      |_ -> ()
-      );
-      s
-    in
-    ChangeDoChildrenPost(s, action)
-end  
-let msv_LOGIC_BOPS = new modStmtVisitor_LOGIC_BOPS    
-
-
-
-
-class modStmtVisitor_BOPS
-  (ssid:int) 
-  (idxs:int array) 
-  (modified:bool ref) = object(self)
-
-  inherit nopCilVisitor
-
-  val cname = "BOPS"
-
-  method mk_exp (e:exp) = 
-    E.log "idxs %s\n" (string_of_list (L.map string_of_int (A.to_list idxs)));
-
-    let idx = ref 0 in
-
-    (*H.iter (fun a b -> E.log "%s %d\n" (string_of_binop a) (A.length b)) bool_bops_ht;*)
-
-    let rec find_ops e = match e with
-      |Const _ -> e
-      |Lval _ -> e
-      |UnOp(uop,e1,tE) -> UnOp(uop,find_ops e1,tE)
-      |BinOp (bop,e1,e2,tE) when H.mem bool_bops_ht bop -> 
-	
-	let arr:binop array = H.find bool_bops_ht bop in
-	let bop':binop = arr.(idxs.(!idx)) in
-	incr idx;
-
-	let e1' = find_ops e1 in
-	let e2' = find_ops e2 in
-	BinOp(bop',e1',e2',tE)
-
-      | _ -> 
-	ealert "%s: don't know how to deal with exp '%a'" cname dn_exp e;
-	e
-    in
-    let r_exp = find_ops e in 
-    assert (!idx = A.length idxs); (*make sure that all idxs are used*)
-    r_exp
-    
-
-  method mk_instr (a_i:instr) : instr =
-    match a_i with
-    |Set(v,e,l) -> Set(v,self#mk_exp e,l)
-
-    |_ -> E.s(E.error "unexp assignment instr %a" d_instr a_i)
- 
-  method vstmt (s:stmt) = 
-    let action (s: stmt) :stmt = 
-      (match s.skind with 
-      |Instr instrs when s.sid = ssid & L.length instrs = 1 ->
-	let old_i = L.hd instrs in 
-	let new_i = self#mk_instr old_i in
-	if !vdebug then 
-	  E.log "Change to '%s' from '%s'\n" (string_of_instr new_i) (string_of_instr old_i);
-	s.skind <- Instr [new_i];
-	modified := true
-      |_ -> ()
-      );
-      s
-    in
-    ChangeDoChildrenPost(s, action)
-end  
-let msv_BOPS = new modStmtVisitor_BOPS  
-
-(*from smt x = e , returns x = e' where e' is similar to e 
-  but with all const in e replaced with uk's *)
-class modStmtVisitor_CONSTS 
-  (ssid:int)
-  (uks:exp list)
-  (modified:bool ref)   = object (self)
-  inherit nopCilVisitor 
-    
-  method mk_exp (e:exp) =
-    let uks:exp array = A.of_list(uks) in
-    let idx = ref 0 in
-    let rec find_const e = match e with
-      |Const _ -> let e' = uks.(!idx) in incr idx; e'
-      |Lval _ -> e
-      |UnOp (uop,e1,ty) -> UnOp(uop,find_const e1,ty)
-      |BinOp (bop,e1,e2,ty) -> BinOp(bop,find_const e1, find_const e2, ty)
-      | _ -> ealert "don't know how to deal with exp '%a'" dn_exp e;
-	e
-    in
-
-    let r_exp = find_const e in
-    assert (!idx = A.length uks); (*make sure that # of consts = uks*)
-    r_exp
-      
-
-  method mk_instr (a_i:instr) : instr =
-    match a_i with
-    |Set(v,e,l) -> Set(v, self#mk_exp e, l)
-      
-    |_ -> E.s(E.error "unexp assignment instr %a" d_instr a_i)
-
-  method vstmt (s:stmt) = 
-    let action (s: stmt) :stmt = 
-      (match s.skind with 
-      |Instr instrs when s.sid = ssid ->
-	assert (L.length instrs = 1);
-	let old_i = L.hd instrs in 
-	let new_i = self#mk_instr old_i in
-	if !vdebug then 
-	  ealert "Change to '%s' from '%s'\n" (string_of_instr new_i) (string_of_instr old_i);
-	s.skind <- Instr [new_i];
-	modified := true
-      |_ -> ()
-      );
-      s
-    in
-    ChangeDoChildrenPost(s, action)  
-  end
-
-let msv_CONSTS = new modStmtVisitor_CONSTS
-
-
-
-class testV = object(self)
+class peekVisitor sid = object(self)
   inherit nopCilVisitor
   method vstmt s = 
-    if s.sid > 0 then
-      E.log "ssid %d\n%a\n" s.sid dn_stmt s;
+    if s.sid = sid then (
+      ealert "Peek: ssid %d\n%a" s.sid dn_stmt s;
+      match s.skind with 
+      |Instr ins -> 
+	let rs = L.map peek_instr ins in 
+	E.log "%s\n" (String.concat "\n" rs);
+      |_ -> E.unimp "stmt : %a" dn_stmt s
+    );
     DoChildren
 end
+
   
 (******************* Transforming File *******************)
 (*declare and set constraints on uk:
@@ -1155,21 +753,25 @@ end
 
 
 
+
 (*sets of compatible operators so we can change, e.g., <= to >= but not <= to && *)
-let ops_comp = [Gt;Ge;Eq;Ne;Lt;Le]
-let ops_logical = [LAnd; LOr]
-let ops_bitwise = [BAnd; BOr; BXor; Shiftlt; Shiftrt]
+(* let ops_comp = [Gt;Ge;Eq;Ne;Lt;Le] *)
+(* let ops_logical = [LAnd; LOr] *)
+(* let ops_bitwise = [BAnd; BOr; BXor; Shiftlt; Shiftrt] *)
 
 
 
 (*add uk's to function args, e.g., fun(int x, int uk0, int uk1);*)
-class funInstrVisitor (uks:varinfo list) (funs_ht:(string, unit) H.t) = object
-
+class funInstrVisitor (uks:varinfo list) = object
   inherit nopCilVisitor
+
+  val mutable ht = H.create 1024 
+  method ht = ht
+
   method vfunc fd = 
     if fd.svar.vname <> "main" then (
       setFormals fd (fd.sformals@uks) ;
-      H.add funs_ht fd.svar.vname () 
+      H.add ht fd.svar.vname () 
     );
     DoChildren
 end
@@ -1189,123 +791,124 @@ class instrCallVisitor (uks:varinfo list) (funs_ht:(string,unit) H.t)= object
     |_ -> SkipChildren
 end
 
-(*runs in parallel*)
-let transform 
-    (filename:string) 
-    (ssid:sid_t) 
-    (tpl_id:int) 
-    (xinfo:string) 
-    (idxs:int list)= 
-  (*read in saved files*)
-
-  let (ast:file),(mainQ:fundec),(tcs:testcase list) =
-    read_file_bin (ginfo_s filename) in
-
-  let tpl = tpl_of_id tpl_id in
-
-  let (n_uks:int), (visitor:exp list -> bool ref -> cilVisitor) = 
-    match tpl with
-    |TP_VS ->
-      let vs:varinfo array = read_file_bin (arr_s filename ssid tpl_id) in
-      let vs:varinfo list = L.map (fun idx ->  vs.(idx) ) idxs in
-      let len = L.length vs in 
-      E.log "** xinfo %s, |vs|=%d, [%s]\n" xinfo len
-	(string_of_list (L.map (fun vi -> vi.vname) vs));
-      
-      succ len,
-      fun uks modified -> (msv_VS ssid vs uks modified :> cilVisitor)
-
-      
-    |TP2 ->
-      let bops:binop array = read_file_bin (arr_s filename ssid tpl_id) in
-      let bops:binop list = L.map (fun idx -> bops.(idx)) idxs in
-      let len = L.length bops in
-      E.log "** xinfo %s, |bops|=%d [%s]\n" xinfo len
-	(string_of_list (L.map string_of_binop bops));
-      
-      succ len,
-      fun uks modified -> ((new modStmtVisitor2) ssid bops uks modified :> cilVisitor)
-	
-	
-    |TP_CONSTS ->
-      assert (L.length idxs = 1);
-      let n_consts = L.hd idxs in
-      E.log "** xinfo %s, n_consts=%d\n" xinfo n_consts;
-      
-      n_consts,
-      fun uks modified -> (msv_CONSTS ssid uks modified :> cilVisitor)
-
-    |TP_LOGIC_BOPS ->
-      assert (L.length idxs = 1);
-      let n_bops = L.hd idxs in
-      E.log "** xinfo %s, n_bops=%d\n" xinfo n_bops;
-      
-      n_bops,
-      fun uks modified -> (msv_LOGIC_BOPS ssid uks modified :> cilVisitor) 
-
-    |TP_BOPS ->       
-      (*idxs = [3, 5, 7]*)
-      E.log "** xinfo %s, |idxs|=%d, [%s]\n" xinfo (L.length idxs) 
-	(string_of_list (L.map string_of_int idxs));
-      
-      0,
-      fun _ modified -> (msv_BOPS ssid (A.of_list idxs) modified :> cilVisitor) 
-      
-  in
-
-
-  (*stay with this order, main, stmt, then others*)
-
-  (*instr main*)
-  let (uks:varinfo list ref) = ref [] in
-  visitCilFileSameGlobals ((new modMainVisitor) mainQ n_uks tcs uks tpl :> cilVisitor) ast;
-  let uks:varinfo list = !uks in
-  assert (L.length uks = n_uks) ;
-  if !vdebug then E.log "create %d uks\n" n_uks;
+let mk_uk_new (uid:int) (min_v:int) (max_v:int)
+    (main_fd:fundec) 
+    (vs:varinfo list ref)
+    (instrs:instr list ref) 
+    :varinfo =
+    
+  let vname = ("uk_" ^ string_of_int uid) in 
   
+  (*declare uks*)
+  let vi:varinfo = makeLocalVar main_fd vname intType in 
+  let lv:lval = var vi in 
+  
+  (*klee_make_symbolic(&uk,sizeof(uk),"uk") *)
+  let mk_sym_instr:instr = mk_call "klee_make_symbolic" 
+    [mkAddrOf(lv); SizeOfE(Lval lv); Const (CStr vname)] in
+  
+  let klee_assert_lb:instr = mk_call "klee_assume" 
+    [BinOp(Le,integer min_v,Lval lv, boolTyp)] in 
+  
+  let klee_assert_ub:instr = mk_call "klee_assume" 
+    [BinOp(Le,Lval lv, integer max_v, boolTyp)] in 
+  
+  vs := !vs@[vi];
+  instrs := !instrs@[mk_sym_instr;  klee_assert_lb; klee_assert_ub];
 
-  (*modify suspStmt*)
-  let modified = ref false in
-  visitCilFileSameGlobals(visitor (L.map exp_of_vi uks) modified) ast;
-  if not !modified then E.s(E.error "stmt %d not modified" ssid);
+  vi 
 
-  (*add uk's to fun decls and fun calls*)
-  let funs_ht = H.create 1024 in
-  visitCilFileSameGlobals ((new funInstrVisitor) uks funs_ht) ast;
-  visitCilFileSameGlobals ((new instrCallVisitor) uks funs_ht) ast;
-
-  (*add include "klee/klee.h" to file*)
-  ast.globals <- (GText "#include \"klee/klee.h\"") :: ast.globals;
-  let fn = transform_s ast.fileName ssid xinfo in
-  write_src fn ast
-
-
-
-(*determine tpl suitable for this statement*)
-let spy_LOGIC_BOPS: (instr -> 'a option) = function
-  |Set (_,e,_) ->
-    let rec find_ops ctr e: int = match e with
-      |Const _ -> ctr
-      |Lval  _ -> ctr
-      |UnOp(_,e1,_) -> find_ops ctr e1
-      |BinOp (bop,e1,e2,_) when L.mem bop logic_bops -> 
-	L.length logic_bops + find_ops ctr e1 + find_ops ctr e2
-
-      | _ ->
-    	ealert "don't know how to deal with exp '%a'" dn_exp e;
-    	ctr
+(*make calls to mainQ on test inp/oupt:
+  mainQ_typ temp;
+  temp = mainQ(inp0,inp1,..);
+  temp == outp
+*)
+let mk_main_new (main_fd:fundec) (mainQ_fd:fundec) (tcs:testcase list) 
+    (uks:varinfo list) (instrs1:instr list) :stmt list= 
+  
+  let rs = L.map (fun (inps, outp) -> 
+    let mainQ_typ:typ = match mainQ_fd.svar.vtype with 
+      |TFun(t,_,_,_) -> t
+      |_ -> E.s(E.error "%s is not fun typ %a\n" 
+		  mainQ_fd.svar.vname d_type mainQ_fd.svar.vtype)
     in
-    let n_ops:int = find_ops 0 e in
-    E.log "n_ops %d\n" n_ops;
-    Some (TP_LOGIC_BOPS,
-	  n_ops,
-	  fun _ ->  ())
+  
+    (*mainQ_typ temp;*)
+    let temp:lval = var(makeTempVar main_fd mainQ_typ) in 
+  
+    (*tmp = mainQ(inp, uks);*)
+    (*todo: should be the types of mainQ inps , not integer*)
+    let args = L.map integer inps in 
+    let i:instr = mk_call ~ftype:mainQ_typ ~av:(Some temp) "mainQ" args in
+    
+    (*mk tmp == outp*)
+    (*todo: should convert outp according to mainQ type*)
+    let e:exp = BinOp(Eq,Lval temp,integer outp, boolTyp) in 
+    i,e
+  ) tcs in
 
-  |_ -> None
+
+
+  let instrs2, exps = L.split rs in 
+
+  (*creates reachability "goal" statement 
+    if(e_1,..,e_n){printf("GOAL: uk0 %d, uk1 %d ..\n",uk0,uk1);klee_assert(0);}
+  *)
+  let s = L.map (fun vi -> vi.vname ^ " %d") uks in
+  let s = "GOAL: " ^ (String.concat ", " s) ^ "\n" in 
+  let print_goal:instr = mk_call "printf" 
+    (Const(CStr(s))::(L.map exp_of_vi uks)) in 
+  
+  (*klee_assert(0);*)
+  let klee_assert_zero:instr = mk_call "klee_assert" [zero] in 
+  
+  let and_exps = apply_binop LAnd exps in
+  let if_skind = If(and_exps, 
+		    mkBlock [mkStmt (Instr([print_goal; klee_assert_zero]))], 
+		    mkBlock [], 
+		    !currentLoc) 
+  in
+  
+  let instrs_skind:stmtkind = Instr(instrs1@instrs2) in
+  [mkStmt instrs_skind; mkStmt if_skind]
 
 
 
+class modStmtVisitor (ssid:int) 
+  (mk_instr:instr -> varinfo list ref -> instr list ref -> instr) = 
+object (self)
 
+  inherit nopCilVisitor 
+    
+  val mutable status = ""
+
+  val uks:varinfo list ref = ref []
+  val instrs:instr list ref = ref []
+
+  method status = status
+  method uks = !uks
+  method instrs = !instrs
+
+  method vstmt (s:stmt) = 
+    let action (s: stmt) :stmt = 
+      (match s.skind with 
+      |Instr ins when s.sid = ssid ->
+	assert (L.length ins = 1);
+
+	let old_i = L.hd ins in 
+	let new_i = mk_instr old_i uks instrs in	
+	s.skind <- Instr [new_i];
+
+	status <- (P.sprintf "%s ## %s"  (*the symbol is used when parsing*)
+		  (string_of_instr old_i) (string_of_instr new_i));
+
+	if !vdebug then ealert "%s" status
+
+      |_ -> ()
+      ); s in
+    ChangeDoChildrenPost(s, action)  
+end
+  
 
 class virtual tpl (cname:string) (cid:int) (level:int) = object
 
@@ -1318,10 +921,12 @@ class virtual tpl (cname:string) (cid:int) (level:int) = object
   method level: int = level
 
   method virtual spy : string -> sid_t -> fundec -> instr -> string
+  method virtual mk_instr : file -> fundec -> int -> int -> int list -> string -> 
+    (instr -> varinfo list ref -> instr list ref -> instr)
 end 
 
 
-class tpl_CONSTS = object
+class tpl_CONSTS = object(self)
   inherit tpl "CONSTS" 3 1 as super
 
   method spy (filename:string) (sid:sid_t) (fd:fundec) = function
@@ -1338,14 +943,50 @@ class tpl_CONSTS = object
     in
     let n_consts:int = find_consts 0 e in
     
-    if !vdebug then E.log "%s: found %d n_consts\n" super#cname n_consts;
+    if !vdebug then E.log "%s: found %d consts\n" super#cname n_consts;
 
-    if n_consts > 0 then 
-      P.sprintf "(%d, %d, %d)" sid super#cid n_consts
-    else
-      ""
-
+    if n_consts > 0 then P.sprintf "(%d, %d, %d)" sid super#cid n_consts
+    else ""
+      
   |_ -> ""
+
+  (*Functions used for stand alone prog*)
+
+  (*idxs e.g., [3] means 3 consts found in the susp stmt*)
+
+  (*from smt x = e , returns x = e' where e' is similar to e 
+  but with all const in e replaced with uk's *)
+  method mk_instr (ast:file) (main_fd:fundec) (ssid:int)  
+    (tpl_id:int) (idxs:int list) (xinfo:string) 
+    :(instr -> varinfo list ref -> instr list ref -> instr) = 
+
+    assert (L.length idxs = 1);
+    let n_consts = L.hd idxs in
+    E.log "** %s: xinfo %s, consts %d\n" super#cname xinfo n_consts;
+
+    fun a_i uks instrs -> (
+      let mk_exp (e:exp): exp = 
+	let new_uk uid = mk_uk_new uid 
+	  uk_const_min uk_const_max main_fd uks instrs in
+	let ctr = ref 0 in
+	
+	let rec find_const e = match e with
+	  |Const _ -> let vi = new_uk !ctr in incr ctr; exp_of_vi vi
+	  |Lval _ -> e
+	  |UnOp (uop,e1,ty) -> UnOp(uop,find_const e1,ty)
+	  |BinOp (bop,e1,e2,ty) -> BinOp(bop,find_const e1, find_const e2, ty)
+	  | _ -> ealert "don't know how to deal with exp '%a'" dn_exp e;
+	    e
+	in
+	let r_exp = find_const e in
+
+	r_exp
+      in
+	
+      match a_i with
+      |Set(v,e,l) -> Set(v, mk_exp e, l)
+      |_ -> E.s(E.error "unexp assignment instr %a" d_instr a_i)
+    )
 
 end
 
@@ -1359,8 +1000,8 @@ class tpl_BOPS = object(self)
 	[|LAnd; LOr|];
 	[|Lt; Gt; Le; Ge; Eq; Ne|]
       ];
-      
-    E.log "%s: create bops ht" super#cname
+    
+    (*E.log "%s: create bops ht\n" super#cname*)
 
   method spy (filename:string) (sid:sid_t) (fd:fundec) = function
   |Set (_,e,_) ->
@@ -1369,27 +1010,71 @@ class tpl_BOPS = object(self)
       |Lval  _ -> l
       |UnOp(_,e1,_) -> find_ops l e1
       |BinOp (bop,e1,e2,_) when H.mem ops_ht bop -> 
-	[bop]@(find_ops l e1)@(find_ops l e2)
+	bop::(find_ops l e1)@(find_ops l e2)
       | _ ->
     	ealert "don't know how to deal with exp '%a'" dn_exp e;
 	l
     in
     let ops = find_ops [] e in
+    let ops_lens = L.map (fun op -> A.length (H.find ops_ht op)) ops in 
     let len = L.length ops in 
 
     if !vdebug then E.log "%s: found %d ops [%s]\n" 
       super#cname len (string_of_list (L.map string_of_binop ops));
 
     if len > 0 then
-      P.sprintf "(%d, %d, %d)" sid super#cid len
+      P.sprintf "(%d, %d, %s)" sid super#cid 
+	(String.concat " " (L.map string_of_int ops_lens))
     else
       ""
-
   |_ -> ""
+
+  (*idxs = [3, 5, 7]*)
+  method mk_instr (ast:file) (main_fd:fundec) (ssid:int) (tpl_id:int) 
+    (idxs:int list) (xinfo:string) 
+    :(instr -> varinfo list ref -> instr list ref -> instr) = 
+
+    assert (L.length idxs > 0);
+    assert (L.for_all (fun idx -> idx >= 0) idxs);
+
+    E.log "**%s: xinfo %s, idxs %d [%s]\n" super#cname xinfo 
+      (L.length idxs) (string_of_int_list idxs);
+
+    fun a_i uks instrs -> (
+      let mk_exp (e:exp): exp = 
+	let idxs = A.of_list idxs in
+	let ctr = ref 0 in
+	
+	let rec find_ops e = match e with
+	  |Const _ -> e
+	  |Lval _ -> e
+	  |UnOp(uop,e1,ty) -> UnOp(uop,find_ops e1,ty)
+	  |BinOp (bop,e1,e2,ty) when H.mem ops_ht bop -> 
+	    
+	    let arr:binop array = H.find ops_ht bop in
+	    let bop':binop = arr.(idxs.(!ctr)) in
+	    incr ctr;
+
+	    let e1', e2' = find_ops e1, find_ops e2 in
+	    
+	    BinOp(bop',e1',e2',ty)
+	      
+	  | _ -> ealert "don't know how to deal with exp '%a'" dn_exp e;
+	    e
+	in
+	let r_exp = find_ops e in 
+	assert (!ctr = A.length idxs); (*make sure that all idxs are used*)
+	r_exp   
+      in
+      
+      match a_i with
+      |Set(v,e,l) -> Set(v,mk_exp e,l)
+      |_ -> E.s(E.error "unexp assignment instr %a" d_instr a_i)
+    )
 
 end
 
-class tpl_VS = object
+class tpl_VS = object(self)
   inherit tpl "VS" 1 3 as super
 
   method spy (filename:string) (sid:sid_t) (fd:fundec)  = function
@@ -1427,6 +1112,44 @@ class tpl_VS = object
   |_ -> ""
 
 
+  method mk_instr (ast:file) (main_fd:fundec) (ssid:int) (tpl_id:int) 
+    (idxs:int list) (xinfo:string) 
+    :(instr -> varinfo list ref -> instr list ref -> instr) =
+
+    let vs:varinfo array = read_file_bin (arr_s ast.fileName ssid tpl_id) in
+    let vs:varinfo list = L.map (fun idx ->  vs.(idx) ) idxs in
+    let n_vs = L.length vs in 
+
+    E.log "** xinfo %s, |vs|=%d, [%s]\n" xinfo n_vs
+      (string_of_list (L.map (fun vi -> vi.vname) vs));
+
+    fun a_i uks instrs -> (
+      let mk_exp () = 
+	let new_uk uid min_v max_v = mk_uk_new uid min_v max_v main_fd uks instrs in
+	
+	let n_uks = succ (L.length vs) in
+	let my_uks = L.map (fun uid -> 
+	  match uid with
+	  |0 -> new_uk uid uk_const_min uk_const_max
+	  |_ -> new_uk uid uk_min uk_max
+	)  (range n_uks)
+	in
+	let my_uks = L.map exp_of_vi my_uks in 
+	
+	let vs = L.map exp_of_vi vs in 
+	let uk0,uks' = (L.hd my_uks), (L.tl my_uks) in 
+	let r_exp = L.fold_left2 (fun a x y -> 
+	  BinOp(PlusA, a, BinOp(Mult, x, y, intType), typeOf uk0))
+	  uk0 uks' vs in
+	
+	r_exp
+      in
+      
+      match a_i with 
+      |Set(v,_,l)->Set(v,mk_exp(),l)
+      |_ -> E.s(E.error "unexp assignment instr %a" d_instr a_i)      
+    )
+
 end
 
 let tpl_classes:tpl list = 
@@ -1436,7 +1159,6 @@ let tpl_classes:tpl list =
 
 
 let spy 
-    (bf_tpls:int list)
     (filename:string)
     (stmt_ht:(int,stmt*fundec) H.t)
     (sid:sid_t)
@@ -1445,14 +1167,12 @@ let spy
     if !vdebug then E.log "Spy stmt %d in fun %s\n%a\n" sid fd.svar.vname dn_stmt s;
 
    match s.skind with 
-   |Instr instrs ->
-     assert (L.length instrs = 1);
-     let sinstr = L.hd instrs in
-     E.log "spying on %a\n" dn_instr sinstr;
-     
-     if L.length bf_tpls <> 0 then
+   |Instr ins ->
+     assert (L.length ins = 1);
+     let sinstr = L.hd ins in
+     if L.length !tpl_ids > 0 then
        L.map (fun cl -> 
-      	 if not (L.mem cl#cid bf_tpls) then "" else cl#spy filename sid fd sinstr
+      	 if not (L.mem cl#cid !tpl_ids) then "" else cl#spy filename sid fd sinstr
        )tpl_classes 
 	 
      else
@@ -1460,50 +1180,60 @@ let spy
 	 if cl#level > !tpl_level then "" else cl#spy filename sid fd sinstr
        )tpl_classes
 	 
-   |_ -> 
-     ealert "no info obtained on stmt %d\n%a" sid dn_stmt s;
-     []
-  
-let tbf
+   |_ -> ealert "no info obtained on stmt %d\n%a" sid dn_stmt s; []
+
+
+(*runs in parallel*)
+let transform_new 
     (filename:string) 
-    (mainQ:fundec) 
-    (ssids:sid_t list)
-    (stmt_ht:(int,stmt*fundec) H.t)
-    (bf_tpls:int list)
-    : string list =
+    (ssid:sid_t) 
+    (tpl_id:int) 
+    (xinfo:string) 
+    (idxs:int list)= 
 
-  E.log "*** TBF ***\n";
+  let (ast:file),(mainQ_fd:fundec),(tcs:testcase list) =
+    read_file_bin (ginfo_s filename) in
 
-  assert (L.length ssids > 0);
+  let main_fd = find_fun ast "main" in 
 
-  (*iterate through top n ssids*)
-  let ssids = take !top_n_ssids ssids in
-
-  if !vdebug then E.log "Obtain info from %d ssids\n" (L.length ssids);
-
-  let rs = L.map (spy bf_tpls filename stmt_ht) ssids in
-  let rs' = L.filter (function |[] -> false |_ -> true) rs in
-  let rs = L.filter (fun c -> c <> "") (L.flatten rs') in
-  ealert "Spy: Got %d infos from %d ssids" (L.length rs) (L.length rs');
+  (*modify statement*)  
+  let cl = L.find (fun cl -> cl#cid = tpl_id ) tpl_classes in 
+  let mk_instr:(instr-> varinfo list ref -> instr list ref -> instr) = 
+    cl#mk_instr ast main_fd ssid tpl_id idxs xinfo in
+  let visitor = (new modStmtVisitor) ssid (fun i -> mk_instr i) in
   
-  if (L.length rs) < 1 then(
-    ealert "No stmts for transformation .. Exiting\n";
-    exit 0
-  );
+  visitCilFileSameGlobals (visitor:> cilVisitor) ast;
+  let stat, uks, instrs = visitor#status, visitor#uks, visitor#instrs in 
+  if stat = "" then E.s(E.error "stmt %d not modified" ssid);
 
-  rs
+  (*modify main*)
+  let stmts = mk_main_new main_fd mainQ_fd tcs uks instrs in
+  main_fd.sbody.bstmts <- stmts;
+
+  (*add uk's to fun decls and fun calls*)
+  let fiv = (new funInstrVisitor) uks in
+  visitCilFileSameGlobals (fiv :> cilVisitor) ast;
+  visitCilFileSameGlobals ((new instrCallVisitor) uks fiv#ht) ast;
+
+  (*add include "klee/klee.h" to file*)
+  ast.globals <- (GText "#include \"klee/klee.h\"") :: ast.globals;
+  let fn = transform_s ast.fileName ssid xinfo in
+
+  (*the symbol is useful when parsing the result, don't mess up this format*)
+  E.log "Transform success: ## '%s' ##  %s\n" fn stat;
+  write_src fn ast
 
 
 (********************** Prototype **********************)
 
 let () = begin
+  E.colorFlag := true;
 
   let filename = ref "" in
   let inputs   = ref "" in
   let outputs  = ref "" in 
 
-  let fl_ssids = ref "" in (*manually provide fault loc info*)
-  let bf_tpls = ref "" in 
+  let fl_ssids = ref [] in (*manually provide fault loc info*)
 
   let no_global_vars = ref false in
   let no_parallel = ref false in 
@@ -1511,17 +1241,18 @@ let () = begin
   let no_break = ref false in 
 
 
-  
-  let do_ssid = ref (-1) in  (*only do transformation on vs_idxs*)
+  let do_standalone = ref false in
+  let ssid = ref (-1) in  (*only do transformation on vs_idxs*)
   let tpl = ref 0 in 
+  let idxs = ref [] in 
   let xinfo = ref "" in  (*helpful info for debuggin*)
-  let idxs = ref "" in 
 
   let only_spy = ref false in
+  let only_peek = ref false in (*for debugging only, peeking at specific stmt*)
   
   let version = P.sprintf "Vug's bug fixer: v0.1 (Cil version %s)" cilVersion in 
 
-  let argDescr = [
+  let arg_descrs = [
     "--debug", Arg.Set vdebug, 
     P.sprintf " shows debug info (default %b)" !vdebug;
 
@@ -1534,58 +1265,78 @@ let () = begin
     "--no_global_vars", Arg.Set no_global_vars,
     P.sprintf " don't consider global variables when modify stmts (default %b)" !no_global_vars;
 
-    "--fl_ssids", Arg.Set_string fl_ssids, 
+    "--fl_ssids", Arg.String (fun s -> fl_ssids := L.map int_of_string (str_split s)), 
     (P.sprintf "%s\n%s" 
        " don't run fault loc, use the given suspicious stmts, e.g., --fl_ssids \"1 3 7\"."
        "Trick: if want to stop process after fault loc then do --fl_ssids \" \"");
-
-    "--bf_tpls", Arg.Set_string bf_tpls, 
-    " only use the given buf fix templates, e.g., --bf_tpls \"1 3\"";
 
     "--no_parallel", Arg.Set no_parallel, 
     P.sprintf " don't use multiprocessing (default %b)" !no_parallel;
 
     "--only_spy", Arg.Set only_spy, 
     P.sprintf " only do spy (default %b)" !only_spy;
+
+    "--only_peek", Arg.Set only_peek, 
+    P.sprintf " only do peek a given stmt given in --ssid (default %b)" !only_peek;
     
     "--top_n_ssids", Arg.Set_int top_n_ssids,
     P.sprintf " consider this number of suspicious stmts (default %d)" !top_n_ssids;
 
-    "--tpl_level", Arg.Set_int tpl_level,
-    P.sprintf " consider fix tpls up to and including this level (default %d)" !tpl_level;
-
     "--min_sscore", Arg.Set_float min_sscore,
     P.sprintf " consider suspicious stmts with at least this score (default %g)" !min_sscore;
     
-      
-    "--do_ssid", Arg.Set_int do_ssid, 
-    " stand alone prog to modify code wrt this statement id, " ^ 
-      "e.g., --do_ssid 1 --tpl 1 --xinfo z2_c5 --idxs \"3 7 8\"";
-    "--tpl", Arg.Set_int tpl, " e.g., --tpl z2_c5";
+
+    "--tpl_ids", Arg.String (fun s -> tpl_ids := L.map int_of_string (str_split s)),
+    " only use the given buf fix template ids, e.g., --tpl_ids \"1 3\"";
+
+
+    "--tpl_level", Arg.Set_int tpl_level,
+    P.sprintf " consider fix tpls up to and including this level (default %d)" !tpl_level;
+
+
+
+    (*Options for Stand alone prog*)
+    "--do_standalone", Arg.Set do_standalone, 
+    " stand alone prog to transform code, " ^ 
+      "e.g., --do_standalone --ssid 1 --tpl 1 --idxs \"3 7 8\" --xinfo z2_c5";
+
+    "--ssid", Arg.Int (fun i -> 
+      if i < 0 then raise (Arg.Bad "arg --ssid must be > 0"); 
+      ssid:=i
+    ), "e.g., --ssid 1";
+
+    "--tpl", Arg.Int (fun i -> 
+      if i < 0 then raise (Arg.Bad "arg --tpl must be > 0");
+      tpl:=i), 
+    " e.g., --tpl 3";
+
     "--xinfo", Arg.Set_string xinfo, " e.g., --xinfo z2_c5";
-    "--idxs", Arg.Set_string idxs, " e.g., --idxs \"3 7 8\""
-
-
-
+    "--idxs", Arg.String (fun s-> 
+      let idxs' =  L.map int_of_string (str_split s) in
+      if L.exists (fun i -> i < 0) idxs' then (
+	let errmsg = (P.sprintf 
+			"arg --idxs must contains non-neg ints, [%s]" 
+			(string_of_int_list idxs')) in
+	
+	raise(Arg.Bad errmsg));      
+      idxs:=idxs'), 
+    " e.g., --idxs \"3 7 8\""
 
   ] in
 
-  let usage = P.sprintf "%s\nusage: tf src inputs outputs [options]\n" version in
 
-  let handleArg s =
-    if !filename = "" then filename := s
+  let handle_arg s =
+    if !filename = "" then (
+      chk_file_exist s ~msg:"require filename"; filename := s
+    )
     else if !inputs = "" then inputs := s
     else if !outputs = "" then outputs := s
     else raise (Arg.Bad "too many input args")
   in
 
-  Arg.parse (Arg.align argDescr) handleArg usage;
-  E.colorFlag := true;
+  let usage = P.sprintf "%s\nusage: tf src inputs outputs [options]\n" version in
 
-  chk_file_exist !filename ~msg:"require filename";
-
-  (*intialize global vars*)
-  bool_bops_ht_init ();
+  Arg.parse (Arg.align arg_descrs) handle_arg usage;
 
   initCIL();
   Cil.lineDirectiveStyle:= None;
@@ -1594,17 +1345,8 @@ let () = begin
 
 
   (*Stand alone program for transformation*)
-  if !do_ssid > -1 then (
-    let ssid   = !do_ssid in
-    let tpl = !tpl in
-    let xinfo  = !xinfo in 
-    let idxs =  L.map int_of_string (str_split !idxs) in
-
-    assert (ssid > 0);
-    assert (tpl > 0);
-    assert (L.length idxs >= 0 && L.for_all (fun idx -> idx >= 0) idxs);
-
-    transform !filename ssid tpl xinfo idxs;
+  if !do_standalone then (
+    transform_new !filename !ssid !tpl !xinfo !idxs;
     exit 0
   );
 
@@ -1640,33 +1382,27 @@ let () = begin
   visitCilFileSameGlobals (new everyVisitor) ast;
   visitCilFileSameGlobals (new breakCondVisitor :> cilVisitor) ast;
   visitCilFileSameGlobals ((new numVisitor) stmt_ht:> cilVisitor) ast;
+  write_src (ast.fileName ^ ".preproc.c") ast;
+
+
+
+  if !only_peek then (
+    ignore(visitCilFileSameGlobals ((new peekVisitor) !ssid) ast);
+    exit 0);
 
 
   (*** fault localization ***)
   let ssids:sid_t list = 
-    if !fl_ssids = "" then fault_loc ast goods bads stmt_ht 
-    else L.map int_of_string (str_split !fl_ssids) 
+    if L.length !fl_ssids > 0 then !fl_ssids else (
+      let ssids' = fault_loc ast goods bads stmt_ht in
+      take !top_n_ssids ssids')   (*only consider ntop ones*)
   in 
 
-  if L.length ssids = 0 then (
-    ealert "No suspicious statements !";
-    exit 0);
-
-
+  if L.length ssids = 0 then (ealert "No suspicious statements !";exit 0);
+			      
   (*** transformation and bug fixing ***)
-
   (*find mainQ*)
-  let mainQ_fd = 
-    let qf = ref None in
-    iterGlobals ast (function 
-    |GFun(f,_) when f.svar.vname = "mainQ" -> qf := Some f
-    |_ -> ()
-    );
-    match !qf with
-    |Some f -> f
-    |None -> E.s (E.error "'%s' does not have a mainQ function\n" ast.fileName)
-  in
-
+  let mainQ_fd = find_fun ast "mainQ" in
   
   if not !no_global_vars then (
     iterGlobals ast (function 
@@ -1674,21 +1410,23 @@ let () = begin
     |_ -> ());
     
     if !vdebug then 
-      E.log "Consider %d gloval vars\n%s\n" 
+      E.log "Consider %d gloval vars [%s]\n" 
 	(L.length !extra_vars) 
 	(string_of_list (L.map (fun vi -> vi.vname) !extra_vars));
   );
 
-  (*write info to disk for parallelism use*)
-  write_src (ast.fileName ^ ".preproc.c") ast;
-  write_file_bin (ginfo_s ast.fileName) (ast,mainQ_fd,tcs); 
-  
-  
-  let rs = tbf ast.fileName mainQ_fd ssids stmt_ht  
-    (L.map int_of_string (str_split !bf_tpls)) in
+ 
+  (*spy on suspicious stmts*)
+  if !vdebug then E.log "Spy on %d ssids [%s]\n" 
+    (L.length ssids) (string_of_list (L.map string_of_int ssids));
 
-  if !only_spy then exit 0;
-
+  let rs = L.map (spy ast.fileName stmt_ht) ssids in
+  let rs' = L.filter (function |[] -> false |_ -> true) rs in
+  let rs = L.filter (fun c -> c <> "") (L.flatten rs') in
+  ealert "Spy: Got %d infos from %d ssids" (L.length rs) (L.length rs');
+  
+  if (L.length rs) = 0 then (ealert "No info spied .. Exiting"; exit 0);
+    
   (*call Python script to do transformation*)
   let rs = String.concat "; " rs in
   let kr_opts = [if !no_parallel then "--no_parallel" else "";
@@ -1701,6 +1439,10 @@ let () = begin
   let cmd = P.sprintf "python klee_reader.py %s --do_tbf \"%s\" %s"
     ast.fileName rs kr_opts in
 
+  if !only_spy then exit 0;
+
+  (*write info to disk for parallelism use*)
+  write_file_bin (ginfo_s ast.fileName) (ast,mainQ_fd,tcs); 
   exec_cmd cmd
     
 
@@ -1714,5 +1456,5 @@ end
 2. useLogicalOperators ... so that means have to manually break stmt like in bug2  a = x ? b : c 
 3. optimize fault loc 
 
-
+TODO: after getting everything working again:  no need to write vs arr to disk, can just reconstruct it from main_fd
 *)
