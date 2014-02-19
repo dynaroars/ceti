@@ -322,7 +322,7 @@ class breakCondVisitor = object(self)
     
   method vfunc f = cur_fd <- (Some f); DoChildren
 
-  method mk_stmt s e loc= 
+  method mk_stmt s e loc: lval*stmt= 
     let fd = match cur_fd with 
       | Some f -> f | None -> E.s(E.error "not in a function") in
     let temp:lval = var(makeTempVar fd (typeOf e)) in
@@ -337,17 +337,17 @@ class breakCondVisitor = object(self)
   method vblock b = 
     let action (b: block) : block = 
       let change_stmt (s: stmt) : stmt list = 
+	(*ealert "debug: looking at stmt %a" dn_stmt s;*)
+
 	match s.skind with
 	|If(e,b1,b2,loc) when self#can_break e -> 
 	  let temp, s1 = self#mk_stmt s e loc in
 	  let s2 = mkStmt (If(Lval temp,b1,b2,loc)) in
 
-	  if !vdebug then E.log "break %a\n to\n%a\n%a\n" 
+	  if !vdebug then E.log "(If) break %a\n to\n%a\n%a\n" 
 	    dn_stmt s dn_stmt s1 dn_stmt s2;
 
 	  [s1;s2]
-
-	(*|While _ may be not really necessary*)
 
 	|Return(e',loc) ->(
 	  match e' with 
@@ -355,7 +355,7 @@ class breakCondVisitor = object(self)
 	    let temp, s1 = self#mk_stmt s e loc in
 	    let s2 = mkStmt (Return(Some (Lval temp), loc)) in
 
-	    if !vdebug then E.log "break %a\nto\n%a\n%a\n" 
+	    if !vdebug then E.log "(Return) break %a\nto\n%a\n%a\n" 
 	      dn_stmt s dn_stmt s1 dn_stmt s2;
 
 	    [s1;s2]
@@ -366,12 +366,15 @@ class breakCondVisitor = object(self)
 	|Instr [Set (lv,Question (e1,e2,e3,ty),loc)] -> 
 	  let s1:instr = Set(lv,e2,loc) in
 	  let s2:instr = Set(lv,e3,loc) in
-	  let sk = If (e1, 
-		       mkBlock [mkStmtOneInstr s1], 
-		       mkBlock [mkStmtOneInstr s2], loc) in
+	  let sk = If(e1, 
+		      mkBlock [mkStmtOneInstr s1], 
+		      mkBlock [mkStmtOneInstr s2], loc) in
 	  let s' = mkStmt sk in
-	  [s']
 
+	  if !vdebug then E.log "(Question?) break %a\nto\n%a\n" 
+	    dn_stmt s dn_stmt s';
+
+	  [s']
 
 	|_ -> [s]
       in
@@ -895,6 +898,8 @@ object (self)
       |Instr ins when s.sid = ssid ->
 	assert (L.length ins = 1);
 
+	(*ealert "debug: stmt %d\n%a\n" ssid dn_stmt s;*)
+
 	let old_i = L.hd ins in 
 	let new_i = mk_instr old_i uks instrs in	
 	s.skind <- Instr [new_i];
@@ -938,7 +943,8 @@ class tpl_CONSTS = object(self)
       |BinOp (_,e1,e2,_) -> find_consts ctr e1 + find_consts ctr e2
 
       | _ -> 
-	ealert "don't know how to deal with exp '%a'" dn_exp e;
+	ealert "%s: don't know how to deal with exp '%a' (sid %d)" 
+	super#cname dn_exp e sid;
     	ctr
     in
     let n_consts:int = find_consts 0 e in
@@ -975,7 +981,9 @@ class tpl_CONSTS = object(self)
 	  |Lval _ -> e
 	  |UnOp (uop,e1,ty) -> UnOp(uop,find_const e1,ty)
 	  |BinOp (bop,e1,e2,ty) -> BinOp(bop,find_const e1, find_const e2, ty)
-	  | _ -> ealert "don't know how to deal with exp '%a'" dn_exp e;
+	  | _ -> 
+	    ealert "%s: don't know how to deal with exp '%a'" 
+	      super#cname dn_exp e;
 	    e
 	in
 	let r_exp = find_const e in
@@ -990,18 +998,37 @@ class tpl_CONSTS = object(self)
 
 end
 
-class tpl_BOPS = object(self)
-  inherit tpl "BOPS" 5 2 as super
+type bop_t = LOGIC_B | COMP_B 
+let string_of_bop_t = function
+  |LOGIC_B -> "LOGIC_B"
+  |COMP_B -> "COMP_B"
+let id_of_bop_t = function
+  |LOGIC_B -> 5
+  |COMP_B -> 6
+
+class tpl_BOPS (x:bop_t) = object(self)
+  inherit tpl (P.sprintf "BOPS_%s" (string_of_bop_t x)) (id_of_bop_t x) 2 as super
 
   val ops_ht:(binop, binop array) H.t = H.create 128
   initializer
-    L.iter(fun bl -> A.iter (fun b -> H.add ops_ht b bl) bl)
-      [
-	[|LAnd; LOr|];
-	[|Lt; Gt; Le; Ge; Eq; Ne|]
-      ];
+  let logic_bops = [|LAnd; LOr|] in
+  let comp_bops = [|Lt; Gt; Le; Ge; Eq; Ne|] in
+
+  let ops = 
+    match x with 
+    |LOGIC_B -> logic_bops
+    |COMP_B -> comp_bops
+  in
+
+  A.iter (fun b -> H.add ops_ht b ops) ops;
+
+  (* L.iter(fun bl -> A.iter (fun b -> H.add ops_ht b bl) bl) *)
+  (*     [(\*TODO: TOO LONG,  should consider only 1 group at a time .. *\) *)
+  (* 	[|LAnd; LOr|]; *)
+  (* 	[|Lt; Gt; Le; Ge; Eq; Ne|] *)
+  (*     ]; *)
     
-    (*E.log "%s: create bops ht\n" super#cname*)
+  E.log "%s: create bops ht (len %d)\n" super#cname (H.length ops_ht)
 
   method spy (filename:string) (sid:sid_t) (fd:fundec) = function
   |Set (_,e,_) ->
@@ -1009,10 +1036,20 @@ class tpl_BOPS = object(self)
       |Const _ -> l
       |Lval  _ -> l
       |UnOp(_,e1,_) -> find_ops l e1
-      |BinOp (bop,e1,e2,_) when H.mem ops_ht bop -> 
-	bop::(find_ops l e1)@(find_ops l e2)
-      | _ ->
-    	ealert "don't know how to deal with exp '%a'" dn_exp e;
+      |BinOp (bop,e1,e2,_) when H.mem ops_ht bop ->  
+	(*TVN: the bug here is that I stop immediately when the top op doesn't match,  cannot do that,  should do something like 
+						       
+	  if match then add to list, otherwise skip  -- also have to do this for mk_instr below
+	  if H.mem ops_ht bop then bop::e1_ops@e2_ops else e1_ops@e2_ops
+*)
+
+	(*E.log "bopA: %s gh0\n" (string_of_binop bop);*)
+	let e1_ops = find_ops l e1 in
+	let e2_ops = find_ops l e2 in
+	bop::e1_ops@e2_ops
+      |_ ->
+	ealert "%s: don't know how to deal with exp '%a' (sid %d)" 
+	  super#cname dn_exp e sid;
 	l
     in
     let ops = find_ops [] e in
@@ -1037,7 +1074,7 @@ class tpl_BOPS = object(self)
     assert (L.length idxs > 0);
     assert (L.for_all (fun idx -> idx >= 0) idxs);
 
-    E.log "**%s: xinfo %s, idxs %d [%s]\n" super#cname xinfo 
+    E.log "**%s: wtf xinfo %s, idxs %d [%s]\n" super#cname xinfo 
       (L.length idxs) (string_of_int_list idxs);
 
     fun a_i uks instrs -> (
@@ -1052,14 +1089,18 @@ class tpl_BOPS = object(self)
 	  |BinOp (bop,e1,e2,ty) when H.mem ops_ht bop -> 
 	    
 	    let arr:binop array = H.find ops_ht bop in
+	    (*E.log "bop: %s gh0\n" (string_of_binop bop);*)
 	    let bop':binop = arr.(idxs.(!ctr)) in
+	    
+	    (*E.log "bop: %s -> %s gh1\n" (string_of_binop bop) (string_of_binop bop');*)
 	    incr ctr;
 
-	    let e1', e2' = find_ops e1, find_ops e2 in
-	    
-	    BinOp(bop',e1',e2',ty)
+	    let e1' = find_ops e1 in
+	    let e2' = find_ops e2 in
+	    BinOp(bop', e1', e2', ty)
 	      
-	  | _ -> ealert "don't know how to deal with exp '%a'" dn_exp e;
+	  | _ -> ealert "%s: don't know how to deal with exp '%a'" 
+	    super#cname dn_exp e;
 	    e
 	in
 	let r_exp = find_ops e in 
@@ -1152,9 +1193,11 @@ class tpl_VS = object(self)
 
 end
 
+
 let tpl_classes:tpl list = 
   [(new tpl_CONSTS:> tpl); 
-   (new tpl_BOPS:> tpl); 
+   ((new tpl_BOPS) LOGIC_B :> tpl); 
+   ((new tpl_BOPS) COMP_B :> tpl); 
    (new tpl_VS:> tpl)]
 
 
@@ -1266,9 +1309,8 @@ let () = begin
     P.sprintf " don't consider global variables when modify stmts (default %b)" !no_global_vars;
 
     "--fl_ssids", Arg.String (fun s -> fl_ssids := L.map int_of_string (str_split s)), 
-    (P.sprintf "%s\n%s" 
-       " don't run fault loc, use the given suspicious stmts, e.g., --fl_ssids \"1 3 7\"."
-       "Trick: if want to stop process after fault loc then do --fl_ssids \" \"");
+    (P.sprintf "%s" 
+       " don't run fault loc, use the given suspicious stmts, e.g., --fl_ssids \"1 3 7\".");
 
     "--no_parallel", Arg.Set no_parallel, 
     P.sprintf " don't use multiprocessing (default %b)" !no_parallel;
@@ -1341,7 +1383,7 @@ let () = begin
   initCIL();
   Cil.lineDirectiveStyle:= None;
   (*Cprint.printLn:=false; (*don't print line # *)*)
-  Cil.useLogicalOperators := true; (*don't break && || *)
+  Cil.useLogicalOperators := true; (*Must be set so that Cil doesn't && || *)
 
 
   (*Stand alone program for transformation*)
@@ -1378,13 +1420,16 @@ let () = begin
   let goods, bads = get_goodbad_tcs filename tcs in
   
   let ast = Frontc.parse filename () in 
-  let stmt_ht:(sid_t,stmt*fundec) H.t = H.create 1024 in 
+
   visitCilFileSameGlobals (new everyVisitor) ast;
   visitCilFileSameGlobals (new breakCondVisitor :> cilVisitor) ast;
+  (*tvn: TODO: this is stupid, doing things twice*)
+  visitCilFileSameGlobals (new everyVisitor) ast;
+  visitCilFileSameGlobals (new breakCondVisitor :> cilVisitor) ast;
+
+  let stmt_ht:(sid_t,stmt*fundec) H.t = H.create 1024 in 
   visitCilFileSameGlobals ((new numVisitor) stmt_ht:> cilVisitor) ast;
   write_src (ast.fileName ^ ".preproc.c") ast;
-
-
 
   if !only_peek then (
     ignore(visitCilFileSameGlobals ((new peekVisitor) !ssid) ast);

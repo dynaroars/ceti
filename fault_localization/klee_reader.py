@@ -72,11 +72,13 @@ def read_klee_worker (src):
     klee_outdir = "{}-klee-out".format(obj)
     if os.path.exists(klee_outdir): shutil.rmtree(klee_outdir)
 
+    timeout = 10
+
     klee_opts = \
         "--allow-external-sym-calls "\
         "-optimize "\
-        "--max-time=600. "\
-        "-output-dir={}".format(klee_outdir)
+        "--max-time={}. "\
+        "-output-dir={}".format(timeout,klee_outdir)
 
     cmd = "klee {} {}".format(klee_opts,obj)
     if vdebug: print "$ {}".format(cmd)
@@ -86,10 +88,12 @@ def read_klee_worker (src):
                     'KLEE: done: completed paths',
                     'KLEE: done: generated tests']
 
-    ignores_run = [
+    ignores_run = [ 
         'KLEE: WARNING: undefined reference to function: printf',
         'KLEE: WARNING ONCE: calling external: printf',
-        'KLEE: ERROR: ASSERTION FAIL: 0']
+        'KLEE: ERROR: ASSERTION FAIL: 0',
+        'KLEE: ERROR: (location information missing) ASSERTION FAIL: 0'
+        ]
 
     while proc.poll() is None:
         line = proc.stdout.readline()
@@ -99,8 +103,12 @@ def read_klee_worker (src):
             if all(x not in line for x in ignores_run + ignores_done):
                 if vdebug: print 'stdout:', line
 
+            if 'KLEE: HaltTimer invoked' in line:
+                print 'stdout:', line, 'W (timeout {}, {})'.format(timeout, src)
+
             
             if "KLEE: ERROR" in line and "ASSERTION FAIL: 0" in line: 
+                print 'Sol Found for {}'.format(src)
                 break
         
             
@@ -163,7 +171,7 @@ def tbf(src, combs, no_bugfix, no_parallel, no_break):
                 for i,c in enumerate(cs):
                     combs_.append((sid,tpl,i,list(c)))
 
-        elif tpl == 5:  #BOPS
+        elif tpl in [5,6]:  #BOPS
             ls = [range(l_) for l_ in l]
             cs = itertools.product(*ls)
             for i,c in enumerate(cs):
@@ -235,6 +243,7 @@ def tbf(src, combs, no_bugfix, no_parallel, no_break):
     tasks = combs_
 
     if no_parallel:
+        print ("KR: tbf tasks {}".format(len(tasks)))
         wrs = wprocess(tasks,V=None,Q=None)
         
     else:
