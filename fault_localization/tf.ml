@@ -7,7 +7,6 @@ module A = Array
 module H = Hashtbl 
 module P = Printf
 
-
 let strip s =
   let is_space = function
     | ' ' | '\012' | '\n' | '\r' | '\t' -> true
@@ -331,6 +330,7 @@ class breakCondVisitor = object(self)
 
   method can_break e = 
     match e with 
+    (*|Const _ -> false (*put this in will make things fast, but might not fix a few bugs*)*)
     |Lval _ -> false
     | _-> true
 
@@ -363,15 +363,15 @@ class breakCondVisitor = object(self)
 	  |_ -> [s]
 	)
 	  (*x = a?b:c  -> if(a){x=b}{x=c} *)
-	|Instr [Set (lv,Question (e1,e2,e3,ty),loc)] -> 
+	|Instr [Set (lv,Question (e1,e2,e3,ty),loc)] ->
 	  let s1:instr = Set(lv,e2,loc) in
 	  let s2:instr = Set(lv,e3,loc) in
-	  let sk = If(e1, 
-		      mkBlock [mkStmtOneInstr s1], 
+	  let sk = If(e1,
+		      mkBlock [mkStmtOneInstr s1],
 		      mkBlock [mkStmtOneInstr s2], loc) in
 	  let s' = mkStmt sk in
 
-	  if !vdebug then E.log "(Question?) break %a\nto\n%a\n" 
+	  if !vdebug then E.log "(Question?) break %a\nto\n%a\n"
 	    dn_stmt s dn_stmt s';
 
 	  [s']
