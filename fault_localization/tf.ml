@@ -123,7 +123,6 @@ let ealert fmt : 'a =
   Pretty.gprintf f fmt
 
 
-
 (*filename formats*)
 let ginfo_s = P.sprintf "%s.info" (*f.c.info*)
 let arr_s = P.sprintf "%s.s%d.t%d.arr" (*f.c.s1.t3.arr*)
@@ -183,7 +182,7 @@ let string_of_exp (s:exp) = Pretty.sprint ~width:80 (dn_exp () s)
 let string_of_instr (s:instr) = Pretty.sprint ~width:80 (dn_instr () s) 
 let string_of_lv (s:lval) = Pretty.sprint ~width:80 (dn_lval () s) 
 let string_of_list =   String.concat ", " 
-let string_of_int_list (l:int list): string = string_of_list (L.map string_of_int l)
+let string_of_ints (l:int list): string = string_of_list (L.map string_of_int l)
 
 let string_of_binop = function
   |Lt -> "<"
@@ -355,21 +354,16 @@ class breakCondVisitor = object(self)
 	  s1s@[s2]
 
 	(*return e; ->  int t = e; return t;*)
-	|Return(e',loc) ->(
-	  match e' with 
-	  |Some e when self#can_break e -> 
-	    let v, s1 = self#mk_stmt s e loc in
-	    let s1s = change_stmt s1 in
+	|Return(Some e,loc) when self#can_break e->
+	  let v, s1 = self#mk_stmt s e loc in
+	  let s1s = change_stmt s1 in
 
-	    let s2 = mkStmt (Return (Some (Lval v), loc)) in
-
-	    if !vdebug then E.log "(Return) break %a\nto\n%a\n%a\n" 
-	      dn_stmt s dn_stmt s1 dn_stmt s2;
-
-	    s1s@[s2]
-
-	  |_ -> [s]
-	)
+	  let s2 = mkStmt (Return (Some (Lval v), loc)) in
+	  
+	  if !vdebug then E.log "(Return) break %a\nto\n%a\n%a\n" 
+	    dn_stmt s dn_stmt s1 dn_stmt s2;
+	  
+	  s1s@[s2]
 
 	(*x = a?b:c  -> if(a){x=b}{x=c} *)
 	|Instr [Set (lv,Question (e1,e2,e3,ty),loc)] ->
@@ -424,8 +418,8 @@ class numVisitor ht = object(self)
 
   method vfunc f = cur_fd <- (Some f); DoChildren
 
-  (* List of stmts that can be modified *)
-  method can_modify : stmtkind -> bool = function 
+  (*Stmts that can be tracked for fault loc and modified for bug fix *)
+  method private can_modify : stmtkind -> bool = function 
   |Instr [Set(_)] -> true
   |_ -> false
 
@@ -536,19 +530,20 @@ let get_goodbad_tcs (filename:string) (tcs:(int list * int) list)  =
 *)
 let stderr_vi = mk_vi ~ftype:(TPtr(TVoid [], [])) "_coverage_fout"
 
-let create_fprintf_stmt (sid : sid_t) :stmt = 
+class coverageVisitor = object(self)
+  inherit nopCilVisitor
+
+  method private create_fprintf_stmt (sid : sid_t) :stmt = 
   let str = P.sprintf "%d\n" sid in
   let stderr = exp_of_vi stderr_vi in
   let instr1 = mk_call "fprintf" [stderr; Const (CStr(str))] in 
   let instr2 = mk_call "fflush" [stderr] in
   mkStmt (Instr([instr1; instr2]))
     
-class coverageVisitor = object
-  inherit nopCilVisitor
   method vblock b = 
     let action (b: block) :block= 
       let insert_printf (s: stmt): stmt list = 
-	if s.sid > 0 then [create_fprintf_stmt s.sid; s]
+	if s.sid > 0 then [self#create_fprintf_stmt s.sid; s]
 	else [s]
       in
       let stmts = L.map insert_printf b.bstmts in 
@@ -560,7 +555,7 @@ class coverageVisitor = object
     let action (f: fundec) :fundec = 
       (*print 0 when entering main so we know it's a new run*)
       if f.svar.vname = "main" then (
-	f.sbody.bstmts <- [create_fprintf_stmt 0] @ f.sbody.bstmts
+	f.sbody.bstmts <- [self#create_fprintf_stmt 0] @ f.sbody.bstmts
       );
       f
     in
@@ -777,7 +772,7 @@ end
 class funInstrVisitor (uks:varinfo list) = object
   inherit nopCilVisitor
 
-  val mutable ht = H.create 1024 
+  val ht = H.create 1024 
   method ht = ht
 
   method vfunc fd = 
@@ -792,6 +787,7 @@ end
 e.g., fun(x); -> fun(x,uk0,uk1); *)
 class instrCallVisitor (uks:varinfo list) (funs_ht:(string,unit) H.t)= object
   inherit nopCilVisitor
+
   method vinst (i:instr) =
     match i with 
     | Call(lvopt,(Lval(Var(va),NoOffset)), args,loc) 
@@ -859,8 +855,6 @@ let mk_main (main_fd:fundec) (mainQ_fd:fundec) (tcs:testcase list)
     i,e
   ) tcs in
 
-
-
   let instrs2, exps = L.split rs in 
 
   (*creates reachability "goal" statement 
@@ -885,7 +879,6 @@ let mk_main (main_fd:fundec) (mainQ_fd:fundec) (tcs:testcase list)
   [mkStmt instrs_skind; mkStmt if_skind]
 
 
-
 class modStmtVisitor (ssid:int) 
   (mk_instr:instr -> varinfo list ref -> instr list ref -> instr) = 
 object (self)
@@ -894,7 +887,7 @@ object (self)
     
   val mutable status = ""
 
-  val uks:varinfo list ref = ref []
+  val uks   :varinfo list ref = ref []
   val instrs:instr list ref = ref []
 
   method status = status
@@ -960,7 +953,9 @@ class tpl_CONSTS = object(self)
     
     if !vdebug then E.log "%s: found %d consts\n" super#cname n_consts;
 
-    if n_consts > 0 then P.sprintf "(%d, %d, %d)" sid super#cid n_consts
+    if n_consts > 0 then 
+      P.sprintf "(%d, %d, %d, %d)" sid super#cid super#level n_consts
+      
     else ""
       
   |_ -> ""
@@ -1045,17 +1040,12 @@ class tpl_BOPS (x:bop_t) = object(self)
       |Const _ -> l
       |Lval  _ -> l
       |UnOp(_,e1,_) -> find_ops l e1
-      |BinOp (bop,e1,e2,_) when H.mem ops_ht bop ->  
-	(*TVN: the bug here is that I stop immediately when the top op doesn't match,  cannot do that,  should do something like 
-						       
-	  if match then add to list, otherwise skip  -- also have to do this for mk_instr below
-	  if H.mem ops_ht bop then bop::e1_ops@e2_ops else e1_ops@e2_ops
-*)
-
-	(*E.log "bopA: %s gh0\n" (string_of_binop bop);*)
+      |BinOp (bop,e1,e2,_) ->  
 	let e1_ops = find_ops l e1 in
 	let e2_ops = find_ops l e2 in
-	bop::e1_ops@e2_ops
+	let e_ops = e1_ops@e2_ops in
+	if H.mem ops_ht bop then bop::e_ops else e_ops
+
       |_ ->
 	ealert "%s: don't know how to deal with exp '%a' (sid %d)" 
 	  super#cname dn_exp e sid;
@@ -1069,7 +1059,7 @@ class tpl_BOPS (x:bop_t) = object(self)
       super#cname len (string_of_list (L.map string_of_binop ops));
 
     if len > 0 then
-      P.sprintf "(%d, %d, %s)" sid super#cid 
+      P.sprintf "(%d, %d, %d, %s)" sid super#cid super#level
 	(String.concat " " (L.map string_of_int ops_lens))
     else
       ""
@@ -1084,7 +1074,7 @@ class tpl_BOPS (x:bop_t) = object(self)
     assert (L.for_all (fun idx -> idx >= 0) idxs);
 
     E.log "**%s: wtf xinfo %s, idxs %d [%s]\n" super#cname xinfo 
-      (L.length idxs) (string_of_int_list idxs);
+      (L.length idxs) (string_of_ints idxs);
 
     fun a_i uks instrs -> (
       let mk_exp (e:exp): exp = 
@@ -1095,14 +1085,17 @@ class tpl_BOPS (x:bop_t) = object(self)
 	  |Const _ -> e
 	  |Lval _ -> e
 	  |UnOp(uop,e1,ty) -> UnOp(uop,find_ops e1,ty)
-	  |BinOp (bop,e1,e2,ty) when H.mem ops_ht bop -> 
-	    
-	    let arr:binop array = H.find ops_ht bop in
-	    (*E.log "bop: %s gh0\n" (string_of_binop bop);*)
-	    let bop':binop = arr.(idxs.(!ctr)) in
-	    
-	    (*E.log "bop: %s -> %s gh1\n" (string_of_binop bop) (string_of_binop bop');*)
-	    incr ctr;
+	  |BinOp (bop,e1,e2,ty) -> 
+
+	    let bop' = 
+	      if H.mem ops_ht bop then
+		let arr:binop array = H.find ops_ht bop in
+		let bop'' = arr.(idxs.(!ctr)) in
+		incr ctr;
+		bop''
+	      else
+		bop
+	    in
 
 	    let e1' = find_ops e1 in
 	    let e2' = find_ops e2 in
@@ -1133,7 +1126,8 @@ class tpl_VS = object(self)
     let bvs = ref [] in
     ignore(visitCilFunction ((new findBoolVars) bvs) fd);
     let bvs = !bvs in
-    
+
+
     (*obtain usuable variables from fd*)
     let vs' = fd.sformals@fd.slocals in
     assert (L.for_all (fun vi -> not vi.vglob) vs');
@@ -1156,7 +1150,7 @@ class tpl_VS = object(self)
     
     if len > 0 then(
       write_file_bin (arr_s filename sid super#cid) (A.of_list vs);
-      P.sprintf "(%d, %d, %d)" sid super#cid len
+      P.sprintf "(%d, %d, %d, %d)" sid super#cid super#level len
     ) else ""
 
   |_ -> ""
@@ -1364,7 +1358,7 @@ let () = begin
       if L.exists (fun i -> i < 0) idxs' then (
 	raise(Arg.Bad (P.sprintf 
 			 "arg --idxs must only contain non-neg ints, [%s]" 
-			 (string_of_int_list idxs'))));
+			 (string_of_ints idxs'))));
       idxs:=idxs'), 
     " e.g., --idxs \"3 7 8\""
 
@@ -1386,7 +1380,7 @@ let () = begin
 
   initCIL();
   Cil.lineDirectiveStyle:= None;
-  (*Cprint.printLn:=false; (*don't print line # *)*)
+  Cprint.printLn:=false; (*don't print line #*)
   Cil.useLogicalOperators := true; (*Must be set so that Cil doesn't && || *)
 
 

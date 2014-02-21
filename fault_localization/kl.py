@@ -7,24 +7,11 @@ from vu_common import pause
 
 vdebug = False
 
-
-#Template Ids and levels
+#Template Ids
 TPL_VS     = 1
 TPL_CONST  = 3
 TPL_BOPS_1 = 5
 TPL_BOPS_2 = 6
-LV_VS    =  5
-LV_CONST =  1
-LV_BOPS_1 = 2
-LV_BOPS_2 = 2
-
-def get_level(tpl):
-    if   tpl == TPL_VS: return LV_VS
-    elif tpl == TPL_CONST: return LV_CONST
-    elif tpl == TPL_BOPS_1: return LV_BOPS_1
-    elif tpl == TPL_BOPS_2: return LV_BOPS_2
-    else: raise AssertionError("unknown template id {}".format(tpl)) 
-        
 
 #parse data based on template
 def get_data(tpl, data_l):
@@ -35,7 +22,7 @@ def get_data(tpl, data_l):
     #[n], n consts ... not doing anything with this
     if tpl == TPL_CONST:
         assert len(data_l) == 1, len(data_l)
-        rs.append((tpl, 0, data_l))
+        rs.append((0, data_l))
         
     #[n], from n vars make comb of sizes 0 .. max_comb_size 
     elif tpl == TPL_VS:  
@@ -44,7 +31,7 @@ def get_data(tpl, data_l):
         for siz in range(max_comb_siz + 1):
             cs = itertools.combinations(range(data_l),siz)
             for i,c in enumerate(cs):
-                rs.append((tpl, i, list(c)))
+                rs.append((i, list(c)))
 
     #[l,m,n,..] lengths l,m,n of 1st,2nd,3rd,.. arrays
     elif tpl == TPL_BOPS_1 or tpl == TPL_BOPS_2:
@@ -53,7 +40,7 @@ def get_data(tpl, data_l):
         ls = [range(l) for l in data_l]
         cs = itertools.product(*ls)
         for i,c in enumerate(cs):
-            rs.append((tpl, i, list(c)))
+            rs.append((i, list(c)))
 
     else:
         raise AssertionError("unknown template id {}".format(tpl))
@@ -212,13 +199,13 @@ def worker_tb(wid, src, sid, tpl, cid, idxs, no_bugfix):
 def wprocess(wid, tasks, no_stop,no_bugfix,V,Q):
 
     tasks = sorted(tasks, 
-                   key=lambda (src,sid,tpl,cid,idxs): (get_level(tpl),len(idxs)))
+                   key=lambda (src,sid,tpl,tpl_level,cid,idxs): 
+                   (tpl_level, len(idxs)))
                    
-
 
     if no_stop:
         rs = [worker_tb(wid, src, sid, tpl, cid, idxs, no_bugfix) 
-              for src, sid, tpl, cid, idxs in tasks]
+              for src, sid, tpl, tpl_level, cid, idxs in tasks]
 
         if Q is None: #no parallel
             return rs
@@ -229,7 +216,7 @@ def wprocess(wid, tasks, no_stop,no_bugfix,V,Q):
     else: #break after finding a fix 
         rs = []
         if Q is None:  #no parallel
-            for src, sid, tpl, cid, idxs in tasks:
+            for src, sid, tpl, tpl_level, cid, idxs in tasks:
                 r = worker_tb(wid, src, sid, tpl, cid, idxs, no_bugfix)
                 if r: 
                     if vdebug: print "worker {}: sol found, break !".format(wid)
@@ -238,7 +225,7 @@ def wprocess(wid, tasks, no_stop,no_bugfix,V,Q):
             return rs
 
         else: #parallel
-            for src, sid, tpl, cid, idxs in tasks:
+            for src, sid, tpl, tpl_level, cid, idxs in tasks:
                 if V.value > 0: 
                     if vdebug: print "worker {}: sol found, break !".format(wid)
                     break
@@ -256,9 +243,9 @@ def wprocess(wid, tasks, no_stop,no_bugfix,V,Q):
 def tb(src, combs, no_bugfix, no_parallel, no_stop):
 
     tasks = []
-    for sid,tpl,l in combs:
+    for sid,tpl,tpl_level, l in combs:
         rs_ = get_data(tpl,l)
-        rs_ = [(src,sid) + r for r in rs_]
+        rs_ = [(src, sid, tpl, tpl_level) + r for r in rs_]
         tasks.extend(rs_)
 
     from random import shuffle
@@ -340,7 +327,8 @@ if __name__ == "__main__":
 
     clist = [(int(c[0]), #stmt id
               int(c[1]), #template id
-              [int(c_) for c_ in c[2].strip().split()]) #data
+              int(c[2]), #template level
+              [int(c_) for c_ in c[3].strip().split()]) #data
              for c in clist]
 
     tb(args.file,
