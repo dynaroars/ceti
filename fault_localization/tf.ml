@@ -95,7 +95,7 @@ let mk_tmp_dir ?(use_time=false) ?(temp_dir="") dprefix dsuffix =
   td
     
 let exec_cmd cmd = 
-  E.log "cmd '%s'\n" cmd ;
+  E.log "$ %s\n" cmd ;
   match Unix.system cmd with
     |Unix.WEXITED(0) -> ()
     |_ -> E.s(E.error "cmd failed '%s'" cmd)
@@ -139,9 +139,12 @@ type testcase = inp_t * outp_t
 type sid_t = int
 
 (* Specific options for this program *)
+
 let vdebug:bool ref = ref false
 let dlog s = if !vdebug then E.log "%s" s else ()
 let dalert s = if !vdebug then ealert "%s" s else ()
+
+let python_script = "kl.py" (*name of the python script, must be in same dir*)
 
 let uk_const_min:int = -100000
 let uk_const_max:int =  100000
@@ -321,60 +324,67 @@ class breakCondVisitor = object(self)
     
   method vfunc f = cur_fd <- (Some f); DoChildren
 
-  method mk_stmt s e loc: lval*stmt= 
+  method private mk_stmt s e loc: lval*stmt= 
     let fd = match cur_fd with 
       | Some f -> f | None -> E.s(E.error "not in a function") in
-    let temp:lval = var(makeTempVar fd (typeOf e)) in
-    let i:instr = Set(temp,e,loc) in
-    temp, {s with skind = Instr [i]} 
+    let v:lval = var(makeTempVar fd (typeOf e)) in
+    let i:instr = Set(v,e,loc) in
+    v, {s with skind = Instr [i]} 
 
-  method can_break e = 
+  method private can_break e = 
     match e with 
     (*|Const _ -> false (*put this in will make things fast, but might not fix a few bugs*)*)
     |Lval _ -> false
     | _-> true
 
+
   method vblock b = 
     let action (b: block) : block = 
-      let change_stmt (s: stmt) : stmt list = 
-	(*ealert "debug: looking at stmt %a" dn_stmt s;*)
 
+      let rec change_stmt (s: stmt) : stmt list = 
 	match s.skind with
+	(*if (e){b1;}{b2;} ->  int t = e; if (t){b1;}{b2;} *)
 	|If(e,b1,b2,loc) when self#can_break e -> 
-	  let temp, s1 = self#mk_stmt s e loc in
-	  let s2 = mkStmt (If(Lval temp,b1,b2,loc)) in
-
+	  let v, s1 = self#mk_stmt s e loc in
+	  let s1s = change_stmt s1 in
+	  
+	  let s2 = mkStmt (If (Lval v,b1,b2,loc)) in
 	  if !vdebug then E.log "(If) break %a\n to\n%a\n%a\n" 
 	    dn_stmt s dn_stmt s1 dn_stmt s2;
 
-	  [s1;s2]
+	  s1s@[s2]
 
+	(*return e; ->  int t = e; return t;*)
 	|Return(e',loc) ->(
 	  match e' with 
 	  |Some e when self#can_break e -> 
-	    let temp, s1 = self#mk_stmt s e loc in
-	    let s2 = mkStmt (Return(Some (Lval temp), loc)) in
+	    let v, s1 = self#mk_stmt s e loc in
+	    let s1s = change_stmt s1 in
+
+	    let s2 = mkStmt (Return (Some (Lval v), loc)) in
 
 	    if !vdebug then E.log "(Return) break %a\nto\n%a\n%a\n" 
 	      dn_stmt s dn_stmt s1 dn_stmt s2;
 
-	    [s1;s2]
+	    s1s@[s2]
 
 	  |_ -> [s]
 	)
-	  (*x = a?b:c  -> if(a){x=b}{x=c} *)
+
+	(*x = a?b:c  -> if(a){x=b}{x=c} *)
 	|Instr [Set (lv,Question (e1,e2,e3,ty),loc)] ->
-	  let s1:instr = Set(lv,e2,loc) in
-	  let s2:instr = Set(lv,e3,loc) in
+	  let i1,i2 = Set(lv,e2,loc), Set(lv,e3,loc) in
 	  let sk = If(e1,
-		      mkBlock [mkStmtOneInstr s1],
-		      mkBlock [mkStmtOneInstr s2], loc) in
+		      mkBlock [mkStmtOneInstr i1],
+		      mkBlock [mkStmtOneInstr i2], 
+		      loc) in
 	  let s' = mkStmt sk in
 
-	  if !vdebug then E.log "(Question?) break %a\nto\n%a\n"
+	  if !vdebug then E.log "(Question) break %a\nto\n%a\n"
 	    dn_stmt s dn_stmt s';
 
 	  [s']
+
 
 	|_ -> [s]
       in
@@ -394,8 +404,7 @@ class everyVisitor = object
     let action (b: block) : block = 
       let change_stmt (s: stmt) : stmt list = 
 	match s.skind with
-	|Instr(h::t) -> 
-	  {s with skind = Instr([h])}::L.map mkStmtOneInstr t
+	|Instr(h::t) -> {s with skind = Instr([h])}::L.map mkStmtOneInstr t
 	|_ -> [s]
       in
       let stmts = L.flatten (L.map change_stmt b.bstmts) in
@@ -794,7 +803,7 @@ class instrCallVisitor (uks:varinfo list) (funs_ht:(string,unit) H.t)= object
     |_ -> SkipChildren
 end
 
-let mk_uk_new (uid:int) (min_v:int) (max_v:int)
+let mk_uk (uid:int) (min_v:int) (max_v:int)
     (main_fd:fundec) 
     (vs:varinfo list ref)
     (instrs:instr list ref) 
@@ -826,7 +835,7 @@ let mk_uk_new (uid:int) (min_v:int) (max_v:int)
   temp = mainQ(inp0,inp1,..);
   temp == outp
 *)
-let mk_main_new (main_fd:fundec) (mainQ_fd:fundec) (tcs:testcase list) 
+let mk_main (main_fd:fundec) (mainQ_fd:fundec) (tcs:testcase list) 
     (uks:varinfo list) (instrs1:instr list) :stmt list= 
   
   let rs = L.map (fun (inps, outp) -> 
@@ -972,7 +981,7 @@ class tpl_CONSTS = object(self)
 
     fun a_i uks instrs -> (
       let mk_exp (e:exp): exp = 
-	let new_uk uid = mk_uk_new uid 
+	let new_uk uid = mk_uk uid 
 	  uk_const_min uk_const_max main_fd uks instrs in
 	let ctr = ref 0 in
 	
@@ -1166,7 +1175,7 @@ class tpl_VS = object(self)
 
     fun a_i uks instrs -> (
       let mk_exp () = 
-	let new_uk uid min_v max_v = mk_uk_new uid min_v max_v main_fd uks instrs in
+	let new_uk uid min_v max_v = mk_uk uid min_v max_v main_fd uks instrs in
 	
 	let n_uks = succ (L.length vs) in
 	let my_uks = L.map (fun uid -> 
@@ -1227,7 +1236,7 @@ let spy
 
 
 (*runs in parallel*)
-let transform_new 
+let transform 
     (filename:string) 
     (ssid:sid_t) 
     (tpl_id:int) 
@@ -1250,7 +1259,7 @@ let transform_new
   if stat = "" then E.s(E.error "stmt %d not modified" ssid);
 
   (*modify main*)
-  let stmts = mk_main_new main_fd mainQ_fd tcs uks instrs in
+  let stmts = mk_main main_fd mainQ_fd tcs uks instrs in
   main_fd.sbody.bstmts <- stmts;
 
   (*add uk's to fun decls and fun calls*)
@@ -1281,10 +1290,10 @@ let () = begin
   let no_global_vars = ref false in
   let no_parallel = ref false in 
   let no_bugfix = ref false in 
-  let no_break = ref false in 
+  let no_stop = ref false in 
 
 
-  let do_standalone = ref false in
+  let only_transform = ref false in
   let ssid = ref (-1) in  (*only do transformation on vs_idxs*)
   let tpl = ref 0 in 
   let idxs = ref [] in 
@@ -1299,11 +1308,14 @@ let () = begin
     "--debug", Arg.Set vdebug, 
     P.sprintf " shows debug info (default %b)" !vdebug;
 
+    "--no_parallel", Arg.Set no_parallel, 
+    P.sprintf " don't use multiprocessing (default %b)" !no_parallel;
+
     "--no_bugfix", Arg.Set no_bugfix, 
     P.sprintf " don't do bugfix (default %b)" !no_bugfix;
     
-    "--no_break", Arg.Set no_break, 
-    P.sprintf " don't do break after finding at least a bugfix (default %b)" !no_break;
+    "--no_stop", Arg.Set no_stop, 
+    P.sprintf " don't stop after finding a fix (default %b)" !no_stop;
 
     "--no_global_vars", Arg.Set no_global_vars,
     P.sprintf " don't consider global variables when modify stmts (default %b)" !no_global_vars;
@@ -1311,36 +1323,30 @@ let () = begin
     "--fl_ssids", Arg.String (fun s -> fl_ssids := L.map int_of_string (str_split s)), 
     (P.sprintf "%s" 
        " don't run fault loc, use the given suspicious stmts, e.g., --fl_ssids \"1 3 7\".");
-
-    "--no_parallel", Arg.Set no_parallel, 
-    P.sprintf " don't use multiprocessing (default %b)" !no_parallel;
-
-    "--only_spy", Arg.Set only_spy, 
-    P.sprintf " only do spy (default %b)" !only_spy;
-
-    "--only_peek", Arg.Set only_peek, 
-    P.sprintf " only do peek a given stmt given in --ssid (default %b)" !only_peek;
-    
+   
     "--top_n_ssids", Arg.Set_int top_n_ssids,
     P.sprintf " consider this number of suspicious stmts (default %d)" !top_n_ssids;
 
     "--min_sscore", Arg.Set_float min_sscore,
     P.sprintf " consider suspicious stmts with at least this score (default %g)" !min_sscore;
     
-
     "--tpl_ids", Arg.String (fun s -> tpl_ids := L.map int_of_string (str_split s)),
-    " only use the given buf fix template ids, e.g., --tpl_ids \"1 3\"";
+    " only use these bugfix template ids, e.g., --tpl_ids \"1 3\"";
 
 
     "--tpl_level", Arg.Set_int tpl_level,
     P.sprintf " consider fix tpls up to and including this level (default %d)" !tpl_level;
 
+    "--only_spy", Arg.Set only_spy, 
+    P.sprintf " only do spy (default %b)" !only_spy;
 
+    "--only_peek", Arg.Set only_peek, 
+    P.sprintf " only do peek a given stmt given in --ssid (default %b)" !only_peek;
 
-    (*Options for Stand alone prog*)
-    "--do_standalone", Arg.Set do_standalone, 
+    (*Options for transforming file (act as a stand alone program)*)
+    "--only_transform", Arg.Set only_transform, 
     " stand alone prog to transform code, " ^ 
-      "e.g., --do_standalone --ssid 1 --tpl 1 --idxs \"3 7 8\" --xinfo z2_c5";
+      "e.g., --only_transform --ssid 1 --tpl 1 --idxs \"3 7 8\" --xinfo z2_c5";
 
     "--ssid", Arg.Int (fun i -> 
       if i < 0 then raise (Arg.Bad "arg --ssid must be > 0"); 
@@ -1356,11 +1362,9 @@ let () = begin
     "--idxs", Arg.String (fun s-> 
       let idxs' =  L.map int_of_string (str_split s) in
       if L.exists (fun i -> i < 0) idxs' then (
-	let errmsg = (P.sprintf 
-			"arg --idxs must contains non-neg ints, [%s]" 
-			(string_of_int_list idxs')) in
-	
-	raise(Arg.Bad errmsg));      
+	raise(Arg.Bad (P.sprintf 
+			 "arg --idxs must only contain non-neg ints, [%s]" 
+			 (string_of_int_list idxs'))));
       idxs:=idxs'), 
     " e.g., --idxs \"3 7 8\""
 
@@ -1387,8 +1391,8 @@ let () = begin
 
 
   (*Stand alone program for transformation*)
-  if !do_standalone then (
-    transform_new !filename !ssid !tpl !xinfo !idxs;
+  if !only_transform then (
+    transform !filename !ssid !tpl !xinfo !idxs;
     exit 0
   );
 
@@ -1421,9 +1425,6 @@ let () = begin
   
   let ast = Frontc.parse filename () in 
 
-  visitCilFileSameGlobals (new everyVisitor) ast;
-  visitCilFileSameGlobals (new breakCondVisitor :> cilVisitor) ast;
-  (*tvn: TODO: this is stupid, doing things twice*)
   visitCilFileSameGlobals (new everyVisitor) ast;
   visitCilFileSameGlobals (new breakCondVisitor :> cilVisitor) ast;
 
@@ -1476,13 +1477,13 @@ let () = begin
   let rs = String.concat "; " rs in
   let kr_opts = [if !no_parallel then "--no_parallel" else "";
   		 if !no_bugfix then  "--no_bugfix"  else "";
-  		 if !no_break then "--no_break" else "";
+  		 if !no_stop then "--no_stop" else "";
   		 if !vdebug then "--debug" else "";
   		] in
   let kr_opts = String.concat " " (L.filter (fun o -> o <> "") kr_opts) in
 
-  let cmd = P.sprintf "python klee_reader.py %s --do_tbf \"%s\" %s"
-    ast.fileName rs kr_opts in
+  let cmd = P.sprintf "python %s %s --do_tb \"%s\" %s"
+    python_script ast.fileName rs kr_opts in
 
   if !only_spy then exit 0;
 
