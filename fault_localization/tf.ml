@@ -330,11 +330,11 @@ class breakCondVisitor = object(self)
     let i:instr = Set(v,e,loc) in
     v, {s with skind = Instr [i]} 
 
-  method private can_break e = 
-    match e with 
-    (*|Const _ -> false (*put this in will make things fast, but might not fix a few bugs*)*)
-    |Lval _ -> false
-    | _-> true
+  (* method private can_break e =  *)
+  (*   match e with  *)
+  (*   (\*|Const _ -> false (\*put this in will make things fast, but might not fix a few bugs*\)*\) *)
+  (*   |Lval _ -> true *)
+  (*   | _-> true *)
 
 
   method vblock b = 
@@ -343,27 +343,27 @@ class breakCondVisitor = object(self)
       let rec change_stmt (s: stmt) : stmt list = 
 	match s.skind with
 	(*if (e){b1;}{b2;} ->  int t = e; if (t){b1;}{b2;} *)
-	|If(e,b1,b2,loc) when self#can_break e -> 
+	|If(e,b1,b2,loc) -> 
 	  let v, s1 = self#mk_stmt s e loc in
 	  let s1s = change_stmt s1 in
-	  
 	  let s2 = mkStmt (If (Lval v,b1,b2,loc)) in
-	  if !vdebug then E.log "(If) break %a\n to\n%a\n%a\n" 
-	    dn_stmt s dn_stmt s1 dn_stmt s2;
+	  let rs = s1s@[s2] in
+	  if !vdebug then E.log "(If) break %a\n ton%s\n" 
+	    dn_stmt s (String.concat "\n" (L.map string_of_stmt rs));
 
-	  s1s@[s2]
+	  rs
 
 	(*return e; ->  int t = e; return t;*)
-	|Return(Some e,loc) when self#can_break e->
+	|Return(Some e,loc) ->
 	  let v, s1 = self#mk_stmt s e loc in
 	  let s1s = change_stmt s1 in
 
 	  let s2 = mkStmt (Return (Some (Lval v), loc)) in
+	  let rs =  s1s@[s2] in
+	  if !vdebug then E.log "(Return) break %a\nto\n%s\n" 
+	    dn_stmt s (String.concat "\n" (L.map string_of_stmt rs));
 	  
-	  if !vdebug then E.log "(Return) break %a\nto\n%a\n%a\n" 
-	    dn_stmt s dn_stmt s1 dn_stmt s2;
-	  
-	  s1s@[s2]
+	  rs
 
 	(*x = a?b:c  -> if(a){x=b}{x=c} *)
 	|Instr [Set (lv,Question (e1,e2,e3,ty),loc)] ->
@@ -373,11 +373,12 @@ class breakCondVisitor = object(self)
 		      mkBlock [mkStmtOneInstr i2], 
 		      loc) in
 	  let s' = mkStmt sk in
+	  let rs = change_stmt s' in 
 
-	  if !vdebug then E.log "(Question) break %a\nto\n%a\n"
-	    dn_stmt s dn_stmt s';
+	  if !vdebug then E.log "(Question) break %a\nto\n%s\n"
+	    dn_stmt s (String.concat "\n" (L.map string_of_stmt rs));
 
-	  [s']
+	  rs
 
 
 	|_ -> [s]
@@ -586,7 +587,6 @@ let coverage (ast:file) (filename_cov:string) (filename_path:string) =
   write_src filename_cov  ast
 
 
-
 (******** Tarantula Fault Loc ********)
 (* Analyze execution path *)    
 let analyze_path (filename:string): int * (int,int) H.t= 
@@ -619,11 +619,27 @@ let analyze_path (filename:string): int * (int,int) H.t=
   !tc_ctr, ht_stat
 
 
-type sscore = int * float (* sid, suspicious score *)
+type sscore = int * float * float (* sid, suspicious score *)
 
 let tarantula (n_g:int) (ht_g:(int,int) H.t) (n_b:int) (ht_b:(int,int) H.t) : sscore list=
+
   assert(n_g <> 0);
   assert(n_b <> 0);
+
+  (*
+    Tarantula (Jones & Harrold '05)
+    score(s) = (bad(s)/total_bad) / (bad(s)/total_bad | good(s)/total_good)
+
+    Ochiai (Abreu et. al '07)
+    score(s) = bad(s)/sqrt(total_bad*(bad(s)+good(s)))
+  *)
+  let tarantula_heuristic bad tbad good tgood =
+    (bad /. tbad) /. ((good /. tgood) +. (bad /. tbad))
+  in
+
+  let ochiai_heuristic bad tbad good tgood = 
+    bad /. sqrt(tbad *. (bad +. good))
+  in
 
   let ht_sids = H.create 1024 in 
   let set_sids ht =
@@ -641,15 +657,16 @@ let tarantula (n_g:int) (ht_g:(int,int) H.t) (n_b:int) (ht_b:(int,int) H.t) : ss
     let get_n_occur sid (ht: (int,int) H.t) : float=
       if H.mem ht sid then float_of_int(H.find ht sid) else 0. 
     in
-
-    let freq_g = (get_n_occur sid ht_g) /. n_g' in
-    let freq_b = (get_n_occur sid ht_b) /. n_b' in
-    let score = freq_b /. (freq_g +. freq_b)  in
-    (sid,score)::rs
+    let good = get_n_occur sid ht_g in
+    let bad = get_n_occur sid ht_b in
+    let score_ttl = tarantula_heuristic bad n_b' good n_g' in
+    let score_oc = ochiai_heuristic bad n_b' good n_g' in
+      
+    (sid,score_ttl,score_oc)::rs
 
   ) ht_sids [] in 
 
-  let rs = L.sort (fun (_,score1) (_,score2) -> compare score2 score1) rs in
+  let rs = L.sort (fun (_,score1,_) (_,score2,_) -> compare score2 score1) rs in
   rs
 
 
@@ -695,11 +712,11 @@ let fault_loc (ast:file) (goods:testcase list) (bads:testcase list)
   (*remove all susp stmts in main, which cannot have anything except call
     to mainQ, everything in main will be deleted when instrumenting main*)
   let idx = ref 0 in 
-  let sscores = L.filter (fun (sid,score) -> 
+  let sscores = L.filter (fun (sid,score,score_oc) -> 
     let s,f = H.find stmt_ht sid in
     if score >= !min_sscore && f.svar.vname <> "main" then(
-      E.log "%d. sid %d in fun '%s' (score %g)\n%a\n"
-	!idx sid f.svar.vname score dn_stmt s;
+      E.log "%d. sid %d in fun '%s' (score %g, %g)\n%a\n"
+	!idx sid f.svar.vname score score_oc dn_stmt s;
       incr idx;
       true
     )else false
@@ -708,7 +725,7 @@ let fault_loc (ast:file) (goods:testcase list) (bads:testcase list)
 
   ealert "FL: found %d stmts with sscores >= %g" (L.length sscores) !min_sscore;
   
-  L.map fst sscores
+  L.map (fun (sid,_,_) -> sid) sscores
 
 (******************* For debugging a Cil construct *******************)
 
