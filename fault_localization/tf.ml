@@ -138,10 +138,30 @@ type testcase = inp_t * outp_t
 type sid_t = int
 
 (* Specific options for this program *)
-
 let vdebug:bool ref = ref false
 let dlog s = if !vdebug then E.log "%s" s else ()
 let dalert s = if !vdebug then ealert "%s" s else ()
+
+
+
+let fl_ssids = ref [] (*manually provide fault loc info*)
+let fl_alg = ref 1 
+
+let no_global_vars = ref false
+let no_parallel = ref false
+let no_bugfix = ref false
+let no_stop = ref false
+
+
+let only_transform = ref false
+let ssid = ref (-1) (*only do transformation on vs_idxs*)
+let tpl = ref 0
+let idxs = ref []
+let xinfo = ref "" (*helpful info for debuggin*)
+
+let only_spy = ref false
+let only_peek = ref false (*for debugging only, peeking at specific stmt*)
+
 
 let python_script = "kl.py" (*name of the python script, must be in same dir*)
 
@@ -587,7 +607,6 @@ let coverage (ast:file) (filename_cov:string) (filename_path:string) =
   write_src filename_cov  ast
 
 
-(******** Tarantula Fault Loc ********)
 (* Analyze execution path *)    
 let analyze_path (filename:string): int * (int,int) H.t= 
 
@@ -619,9 +638,9 @@ let analyze_path (filename:string): int * (int,int) H.t=
   !tc_ctr, ht_stat
 
 
-type sscore = int * float * float (* sid, suspicious score *)
+type sscore = int * float (* sid, suspicious score *)
 
-let tarantula (n_g:int) (ht_g:(int,int) H.t) (n_b:int) (ht_b:(int,int) H.t) : sscore list=
+let compute_sscores (n_g:int) (ht_g:(int,int) H.t) (n_b:int) (ht_b:(int,int) H.t) : sscore list=
 
   assert(n_g <> 0);
   assert(n_b <> 0);
@@ -641,6 +660,8 @@ let tarantula (n_g:int) (ht_g:(int,int) H.t) (n_b:int) (ht_b:(int,int) H.t) : ss
     bad /. sqrt(tbad *. (bad +. good))
   in
 
+  let alg = if !fl_alg = 1 then ochiai_heuristic else tarantula_heuristic in
+
   let ht_sids = H.create 1024 in 
   let set_sids ht =
     H.iter (fun sid _ ->
@@ -659,14 +680,13 @@ let tarantula (n_g:int) (ht_g:(int,int) H.t) (n_b:int) (ht_b:(int,int) H.t) : ss
     in
     let good = get_n_occur sid ht_g in
     let bad = get_n_occur sid ht_b in
-    let score_ttl = tarantula_heuristic bad n_b' good n_g' in
-    let score_oc = ochiai_heuristic bad n_b' good n_g' in
+    let score =  alg bad n_b' good n_g' in
       
-    (sid,score_ttl,score_oc)::rs
+    (sid,score)::rs
 
   ) ht_sids [] in 
 
-  let rs = L.sort (fun (_,score1,_) (_,score2,_) -> compare score2 score1) rs in
+  let rs = L.sort (fun (_,score1) (_,score2) -> compare score2 score1) rs in
   rs
 
 
@@ -704,19 +724,18 @@ let fault_loc (ast:file) (goods:testcase list) (bads:testcase list)
     (ast_bn ^ ".outputs_bad_dontcare") bads;
   Unix.rename path_generic path_b;
 
-
   let n_g, ht_g = analyze_path path_g in
   let n_b, ht_b = analyze_path path_b in
-  let sscores = tarantula n_g ht_g n_b ht_b in
+  let sscores = compute_sscores n_g ht_g n_b ht_b in
 
   (*remove all susp stmts in main, which cannot have anything except call
     to mainQ, everything in main will be deleted when instrumenting main*)
   let idx = ref 0 in 
-  let sscores = L.filter (fun (sid,score,score_oc) -> 
+  let sscores = L.filter (fun (sid,score) -> 
     let s,f = H.find stmt_ht sid in
     if score >= !min_sscore && f.svar.vname <> "main" then(
-      E.log "%d. sid %d in fun '%s' (score %g, %g)\n%a\n"
-	!idx sid f.svar.vname score score_oc dn_stmt s;
+      E.log "%d. sid %d in fun '%s' (score %g)\n%a\n"
+	!idx sid f.svar.vname score dn_stmt s;
       incr idx;
       true
     )else false
@@ -725,8 +744,173 @@ let fault_loc (ast:file) (goods:testcase list) (bads:testcase list)
 
   ealert "FL: found %d stmts with sscores >= %g" (L.length sscores) !min_sscore;
   
-  L.map (fun (sid,_,_) -> sid) sscores
+  L.map fst sscores
 
+
+class faultloc = object(self)
+    
+  method coverage (ast:file) (filename_cov:string) (filename_path:string) = 
+
+  (*add printf stmts*)
+  visitCilFileSameGlobals (new coverageVisitor) ast;
+
+  (*add to global
+    _coverage_fout = fopen("file.c.path", "ab");
+  *)
+  let new_global = GVarDecl(stderr_vi, !currentLoc) in
+  ast.globals <- new_global :: ast.globals;
+
+  let lhs = var(stderr_vi) in
+  let arg1 = Const(CStr(filename_path)) in
+  let arg2 = Const(CStr("ab")) in
+  let instr = mk_call ~av:(Some lhs) "fopen" [arg1; arg2] in
+  let new_s = mkStmt (Instr[instr]) in 
+
+  let fd = getGlobInit ast in
+  fd.sbody.bstmts <- new_s :: fd.sbody.bstmts;
+  
+  write_src filename_cov  ast
+
+  (* Analyze execution path *)    
+  method analyze_path (filename:string): int * (int,int) H.t= 
+
+    if !vdebug then E.log "** Analyze exe path '%s'\n" filename;
+
+    let tc_ctr = ref 0 in
+    let ht_stat = H.create 1024 in 
+    let mem = H.create 1024 in 
+    let lines = read_lines filename in 
+    L.iter(fun line -> 
+      let sid = int_of_string line in 
+      if sid = 0 then (
+	incr tc_ctr;
+	H.clear mem;
+      )
+      else (
+	let sid_tc = (sid, !tc_ctr) in
+	if not (H.mem mem sid_tc) then (
+	  H.add mem sid_tc ();
+	  
+	  let n_occurs = 
+	    if not (H.mem ht_stat sid) then 1
+	    else succ (H.find ht_stat sid)
+	      
+	  in H.replace ht_stat sid n_occurs
+	)
+      )
+    )lines;
+    !tc_ctr, ht_stat
+
+  method compute_sscores 
+    (n_g:int) (ht_g:(int,int) H.t) 
+    (n_b:int) (ht_b:(int,int) H.t) : sscore list=
+
+    assert(n_g <> 0);
+    assert(n_b <> 0);
+    
+    (*
+      Tarantula (Jones & Harrold '05)
+      score(s) = (bad(s)/total_bad) / (bad(s)/total_bad | good(s)/total_good)
+      
+      Ochiai (Abreu et. al '07)
+      score(s) = bad(s)/sqrt(total_bad*(bad(s)+good(s)))
+    *)
+    let tarantula_heuristic bad tbad good tgood =
+      (bad /. tbad) /. ((good /. tgood) +. (bad /. tbad))
+    in
+
+    let ochiai_heuristic bad tbad good tgood = 
+      bad /. sqrt(tbad *. (bad +. good))
+    in
+
+    let alg = if !fl_alg = 1 then ochiai_heuristic else tarantula_heuristic in
+
+    let ht_sids = H.create 1024 in 
+    let set_sids ht =
+      H.iter (fun sid _ ->
+	if not (H.mem ht_sids sid) then H.add ht_sids sid ()
+      ) ht;
+    in
+    set_sids ht_g ;
+    set_sids ht_b ;
+
+    let n_g = float_of_int(n_g) in
+    let n_b = float_of_int(n_b) in
+
+    let rs = H.fold (fun sid _ rs ->
+      let get_n_occur sid (ht: (int,int) H.t) : float=
+	if H.mem ht sid then float_of_int(H.find ht sid) else 0. 
+      in
+      let good = get_n_occur sid ht_g in
+      let bad = get_n_occur sid ht_b in
+      let score =  alg bad n_b good n_g in
+      
+      (sid,score)::rs
+
+    ) ht_sids [] in 
+
+    let rs = L.sort (fun (_,score1) (_,score2) -> compare score2 score1) rs in
+    rs
+
+  method fl (ast:file) (goods:testcase list) (bads:testcase list) 
+    (stmt_ht:(sid_t,stmt*fundec) H.t): sid_t list = 
+    E.log "*** Fault Localization ***\n";
+
+    assert (L.length goods > 0) ;
+    assert (L.length bads  > 0) ;
+
+    let ast_bn =  
+      let tdir = Filename.dirname ast.fileName in
+      let tdir = mk_tmp_dir ~temp_dir:tdir "fautloc" "" in
+      P.sprintf "%s/%s" tdir (Filename.basename ast.fileName) 
+    in
+
+    (*create cov file*)
+    let fileName_cov = ast_bn ^ ".cov.c"  in
+    let fileName_path = ast_bn ^ ".path"  in
+    self#coverage (copy_obj ast) fileName_cov fileName_path;
+
+    (*compile cov file*)
+    let prog:string = compile fileName_cov in
+
+    (*run prog to obtain good/bad paths*)
+    let path_generic = ast_bn ^ ".path" in
+    let path_g = ast_bn ^ ".gpath" in
+    let path_b = ast_bn ^ ".bpath" in
+
+    (*good path*)
+    mk_run_testscript (ast_bn ^ ".g.sh") prog 
+      (ast_bn ^ ".outputs_g_dontcare") goods;
+    Unix.rename path_generic path_g;
+    
+    (*bad path*)
+    mk_run_testscript (ast_bn ^ ".b.sh") prog 
+      (ast_bn ^ ".outputs_bad_dontcare") bads;
+    Unix.rename path_generic path_b;
+
+    let n_g, ht_g = self#analyze_path path_g in
+    let n_b, ht_b = self#analyze_path path_b in
+    let sscores = self#compute_sscores n_g ht_g n_b ht_b in
+
+    (*remove all susp stmts in main, which cannot have anything except call
+      to mainQ, everything in main will be deleted when instrumenting main*)
+    let idx = ref 0 in 
+    let sscores = L.filter (fun (sid,score) -> 
+      let s,f = H.find stmt_ht sid in
+      if score >= !min_sscore && f.svar.vname <> "main" then(
+	E.log "%d. sid %d in fun '%s' (score %g)\n%a\n"
+	  !idx sid f.svar.vname score dn_stmt s;
+	incr idx;
+	true
+      )else false
+    )sscores in
+
+
+    ealert "FL: found %d stmts with sscores >= %g" (L.length sscores) !min_sscore;
+    
+    L.map fst sscores
+    
+end
 (******************* For debugging a Cil construct *******************)
 
 let rec peek_exp e: string = 
@@ -1027,8 +1211,8 @@ let id_of_bop_t = function
   |LOGIC_B -> 5
   |COMP_B -> 6
 
-class tpl_BOPS (x:bop_t) = object(self)
-  inherit tpl (P.sprintf "BOPS_%s" (string_of_bop_t x)) (id_of_bop_t x) 2 as super
+class tpl_OPS (x:bop_t) = object(self)
+  inherit tpl (P.sprintf "OPS_%s" (string_of_bop_t x)) (id_of_bop_t x) 2 as super
 
   val ops_ht:(binop, binop array) H.t = H.create 128
   initializer
@@ -1216,8 +1400,8 @@ end
 
 let tpl_classes:tpl list = 
   [(new tpl_CONSTS:> tpl); 
-   ((new tpl_BOPS) LOGIC_B :> tpl); 
-   ((new tpl_BOPS) COMP_B :> tpl); 
+   ((new tpl_OPS) LOGIC_B :> tpl); 
+   ((new tpl_OPS) COMP_B :> tpl); 
    (new tpl_VS:> tpl)]
 
 
@@ -1295,23 +1479,6 @@ let () = begin
   let filename = ref "" in
   let inputs   = ref "" in
   let outputs  = ref "" in 
-
-  let fl_ssids = ref [] in (*manually provide fault loc info*)
-
-  let no_global_vars = ref false in
-  let no_parallel = ref false in 
-  let no_bugfix = ref false in 
-  let no_stop = ref false in 
-
-
-  let only_transform = ref false in
-  let ssid = ref (-1) in  (*only do transformation on vs_idxs*)
-  let tpl = ref 0 in 
-  let idxs = ref [] in 
-  let xinfo = ref "" in  (*helpful info for debuggin*)
-
-  let only_spy = ref false in
-  let only_peek = ref false in (*for debugging only, peeking at specific stmt*)
   
   let version = P.sprintf "Vug's bug fixer: v0.1 (Cil version %s)" cilVersion in 
 
@@ -1334,6 +1501,9 @@ let () = begin
     "--fl_ssids", Arg.String (fun s -> fl_ssids := L.map int_of_string (str_split s)), 
     (P.sprintf "%s" 
        " don't run fault loc, use the given suspicious stmts, e.g., --fl_ssids \"1 3 7\".");
+
+    "--fl_alg", Arg.Set_int fl_alg,
+    P.sprintf " use fault localization algorithm, 1 Ochia, 2 Tarantula (default %d)" !fl_alg;
    
     "--top_n_ssids", Arg.Set_int top_n_ssids,
     P.sprintf " consider this number of suspicious stmts (default %d)" !top_n_ssids;
@@ -1343,7 +1513,6 @@ let () = begin
     
     "--tpl_ids", Arg.String (fun s -> tpl_ids := L.map int_of_string (str_split s)),
     " only use these bugfix template ids, e.g., --tpl_ids \"1 3\"";
-
 
     "--tpl_level", Arg.Set_int tpl_level,
     P.sprintf " consider fix tpls up to and including this level (default %d)" !tpl_level;
