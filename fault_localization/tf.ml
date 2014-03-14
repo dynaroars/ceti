@@ -134,7 +134,7 @@ let gcc_cmd = P.sprintf "gcc %s -o %s >& /dev/null"
 let boolTyp:typ = intType
 type inp_t = int list 
 type outp_t = int 
-type testcase = inp_t * outp_t
+type testcase_t = inp_t * outp_t
 type sid_t = int
 
 (* Specific options for this program *)
@@ -459,12 +459,12 @@ let string_of_tc (tc:inp_t * outp_t) : string =
   let outp = string_of_int outp in 
   "([" ^ inp ^ "]" ^ ", " ^ outp ^ "]"
 
-let string_of_tcs (tcs:testcase list) :string = 
+let string_of_tcs (tcs:testcase_t list) :string = 
   let tcs = L.map string_of_tc tcs in 
   let tcs = String.concat "; " tcs in
   "["^ tcs ^ "]"
 
-class cl_testcase (filename:string) = object(self)
+class clTestCase (filename:string) = object(self)
   
   val filename = filename
   val mutable mytcs = []
@@ -532,7 +532,7 @@ class cl_testcase (filename:string) = object(self)
 
   (*partition tcs into 2 sets: good / bad*)
   method private compare_outputs 
-    (prog_outputs:string) (tcs:testcase list) : testcase list * testcase list = 
+    (prog_outputs:string) (tcs:testcase_t list) : testcase_t list * testcase_t list = 
 
   let prog_outputs = read_lines prog_outputs in 
   assert (L.length prog_outputs == L.length tcs) ;
@@ -593,8 +593,8 @@ end
 type sscore = int * float (* sid, suspicious score *)
 class faultloc 
   (ast:file) 
-  (goods:testcase list) 
-  (bads:testcase list) 
+  (goods:testcase_t list) 
+  (bads:testcase_t list) 
   (stmt_ht:(sid_t,stmt*fundec) H.t)= 
 object(self)
 
@@ -754,7 +754,7 @@ object(self)
 
   (*
     Tarantula (Jones & Harrold '05)
-    score(s) = (bad(s)/total_bad) / (bad(s)/total_bad | good(s)/total_good)
+    score(s) = (bad(s)/total_bad) / (bad(s)/total_bad + good(s)/total_good)
     
     Ochiai (Abreu et. al '07)
     score(s) = bad(s)/sqrt(total_bad*(bad(s)+good(s)))
@@ -809,21 +809,6 @@ end
 
   
 (******************* Transforming File *******************)
-(*declare and set constraints on uk:
-  int uk;
-  klee_make_symbol(&uk,sizeof(uk),"uk");
-  mk_klee_assume(min<=uk<=max);
-*)
-
-
-
-
-(*sets of compatible operators so we can change, e.g., <= to >= but not <= to && *)
-(* let ops_comp = [Gt;Ge;Eq;Ne;Lt;Le] *)
-(* let ops_logical = [LAnd; LOr] *)
-(* let ops_bitwise = [BAnd; BOr; BXor; Shiftlt; Shiftrt] *)
-
-
 
 (*add uk's to function args, e.g., fun(int x, int uk0, int uk1);*)
 class funInstrVisitor (uks:varinfo list) = object
@@ -888,7 +873,7 @@ let mk_uk (uid:int) (min_v:int) (max_v:int)
   temp = mainQ(inp0,inp1,..);
   temp == outp
 *)
-let mk_main (main_fd:fundec) (mainQ_fd:fundec) (tcs:testcase list) 
+let mk_main (main_fd:fundec) (mainQ_fd:fundec) (tcs:testcase_t list) 
     (uks:varinfo list) (instrs1:instr list) :stmt list= 
   
   let rs = L.map (fun (inps, outp) -> 
@@ -941,15 +926,14 @@ class modStmtVisitor (ssid:int)
 object (self)
 
   inherit nopCilVisitor 
-    
-  val mutable status = ""
 
   val uks   :varinfo list ref = ref []
   val instrs:instr list ref = ref []
+  val mutable status = ""
 
-  method status = status
-  method uks = !uks
+  method uks    = !uks
   method instrs = !instrs
+  method status = status
 
   method vstmt (s:stmt) = 
     let action (s: stmt) :stmt = 
@@ -974,7 +958,7 @@ object (self)
 end
   
 
-class virtual tpl (cname:string) (cid:int) (level:int) = object
+class virtual bugfixTemplate (cname:string) (cid:int) (level:int) = object
 
   val cname = cname
   val cid = cid
@@ -984,16 +968,16 @@ class virtual tpl (cname:string) (cid:int) (level:int) = object
   method cid : int = cid
   method level: int = level
 
-  method virtual spy : string -> sid_t -> fundec -> instr -> string
+  method virtual spy_stmt : string -> sid_t -> fundec -> instr -> string
   method virtual mk_instr : file -> fundec -> int -> int -> int list -> string -> 
     (instr -> varinfo list ref -> instr list ref -> instr)
 end 
 
 
-class tpl_CONSTS = object(self)
-  inherit tpl "CONSTS" 3 1 as super
+class bugfixTemplate_CONSTS = object(self)
+  inherit bugfixTemplate "CONSTS" 3 1 as super
 
-  method spy (filename:string) (sid:sid_t) (fd:fundec) = function
+  method spy_stmt (filename:string) (sid:sid_t) (fd:fundec) = function
   |Set (_,e,_) ->
     let rec find_consts ctr e: int = match e with
       |Const _ -> succ ctr
@@ -1024,7 +1008,7 @@ class tpl_CONSTS = object(self)
   (*from smt x = e , returns x = e' where e' is similar to e 
   but with all const in e replaced with uk's *)
   method mk_instr (ast:file) (main_fd:fundec) (ssid:int)  
-    (tpl_id:int) (idxs:int list) (xinfo:string) 
+    (bugfixTemplate_id:int) (idxs:int list) (xinfo:string) 
     :(instr -> varinfo list ref -> instr list ref -> instr) = 
 
     assert (L.length idxs = 1);
@@ -1067,8 +1051,8 @@ let id_of_bop_t = function
   |LOGIC_B -> 5
   |COMP_B -> 6
 
-class tpl_OPS (x:bop_t) = object(self)
-  inherit tpl (P.sprintf "OPS_%s" (string_of_bop_t x)) (id_of_bop_t x) 2 as super
+class bugfixTemplate_OPS (x:bop_t) = object(self)
+  inherit bugfixTemplate (P.sprintf "OPS_%s" (string_of_bop_t x)) (id_of_bop_t x) 2 as super
 
   val ops_ht:(binop, binop array) H.t = H.create 128
   initializer
@@ -1091,7 +1075,7 @@ class tpl_OPS (x:bop_t) = object(self)
     
   E.log "%s: create bops ht (len %d)\n" super#cname (H.length ops_ht)
 
-  method spy (filename:string) (sid:sid_t) (fd:fundec) = function
+  method spy_stmt (filename:string) (sid:sid_t) (fd:fundec) = function
   |Set (_,e,_) ->
     let rec find_ops l e: binop list = match e with
       |Const _ -> l
@@ -1174,16 +1158,15 @@ class tpl_OPS (x:bop_t) = object(self)
 
 end
 
-class tpl_VS = object(self)
-  inherit tpl "VS" 1 3 as super
+class bugfixTemplate_VS = object(self)
+  inherit bugfixTemplate "VS" 1 3 as super
 
-  method spy (filename:string) (sid:sid_t) (fd:fundec)  = function
+  method spy_stmt (filename:string) (sid:sid_t) (fd:fundec)  = function
   |Set _ ->
     (*Find vars in sfd have type bool*)
     let bvs = ref [] in
     ignore(visitCilFunction ((new findBoolVars) bvs) fd);
     let bvs = !bvs in
-
 
     (*obtain usuable variables from fd*)
     let vs' = fd.sformals@fd.slocals in
@@ -1254,11 +1237,11 @@ class tpl_VS = object(self)
 end
 
 
-let tpl_classes:tpl list = 
-  [(new tpl_CONSTS:> tpl); 
-   ((new tpl_OPS) LOGIC_B :> tpl); 
-   ((new tpl_OPS) COMP_B :> tpl); 
-   (new tpl_VS:> tpl)]
+let tpl_classes:bugfixTemplate list = 
+  [(new bugfixTemplate_CONSTS:> bugfixTemplate); 
+   ((new bugfixTemplate_OPS) LOGIC_B :> bugfixTemplate); 
+   ((new bugfixTemplate_OPS) COMP_B :> bugfixTemplate); 
+   (new bugfixTemplate_VS:> bugfixTemplate)]
 
 
 let spy 
@@ -1275,12 +1258,12 @@ let spy
      let sinstr = L.hd ins in
      if L.length !tpl_ids > 0 then
        L.map (fun cl -> 
-      	 if not (L.mem cl#cid !tpl_ids) then "" else cl#spy filename sid fd sinstr
+      	 if not (L.mem cl#cid !tpl_ids) then "" else cl#spy_stmt filename sid fd sinstr
        )tpl_classes 
 	 
      else
        L.map(fun cl -> 
-	 if cl#level > !tpl_level then "" else cl#spy filename sid fd sinstr
+	 if cl#level > !tpl_level then "" else cl#spy_stmt filename sid fd sinstr
        )tpl_classes
 	 
    |_ -> ealert "no info obtained on stmt %d\n%a" sid dn_stmt s; []
@@ -1294,7 +1277,7 @@ let transform
     (xinfo:string) 
     (idxs:int list)= 
 
-  let (ast:file),(mainQ_fd:fundec),(tcs:testcase list) =
+  let (ast:file),(mainQ_fd:fundec),(tcs:testcase_t list) =
     read_file_bin (ginfo_s filename) in
 
   let main_fd = find_fun ast "main" in 
@@ -1454,7 +1437,7 @@ let () = begin
   let filename,inputs,outputs = fn', !inputs, !outputs in
   at_exit (fun () ->  E.log "Note: temp files created in dir '%s'\n" tdir);
 
-  let tcObj = (new cl_testcase) filename in
+  let tcObj = (new clTestCase) filename in
   tcObj#get_tcs inputs outputs;
   
   let ast = Frontc.parse filename () in 
