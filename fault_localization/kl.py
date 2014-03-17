@@ -12,26 +12,34 @@ TPL_VS     = 1
 TPL_CONST  = 3
 TPL_BOPS_1 = 5
 TPL_BOPS_2 = 6
+TPL_BOPS_PR = 7
 
 #parse data based on template
 def get_data(tpl, data_l):
     import itertools
-    max_comb_siz = 2 
     rs = []
 
     #[n], n consts ... not doing anything with this
     if tpl == TPL_CONST:
         assert len(data_l) == 1, len(data_l)
         rs.append((0, data_l))
-        
+
     #[n], from n vars make comb of sizes 0 .. max_comb_size 
     elif tpl == TPL_VS:  
+        max_comb_siz = 2 
         assert len(data_l) == 1, len(data_l)
         data_l = data_l[0]
         for siz in range(max_comb_siz + 1):
             cs = itertools.combinations(range(data_l),siz)
             for i,c in enumerate(cs):
                 rs.append((i, list(c)))
+
+    #[n], n ops
+    #make n list [1] ,.., [n]
+    elif tpl == TPL_BOPS_PR:
+        assert len(data_l) == 1, len(data_l)
+        for i in range(data_l[0]):
+            rs.append((i,[i+1]))
 
     #[l,m,n,..] lengths l,m,n of 1st,2nd,3rd,.. arrays
     elif tpl == TPL_BOPS_1 or tpl == TPL_BOPS_2:
@@ -279,7 +287,7 @@ def tb(src, combs, no_bugfix, no_parallel, no_stop):
     rs = "\n".join(["{}. {}".format(i,r) for i,r in enumerate(wrs)])
 
     print ("KR: summary "
-           "(bugfix: {}, stop after getting some success: {}, parallel: {}), "
+           "(bugfix: {}, stop after a repair found: {}, parallel: {}), "
            "'{}', {} / {}\n"
            "{}"
            .format(not no_bugfix, not no_stop, not no_parallel, 
