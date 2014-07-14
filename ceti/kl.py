@@ -3,9 +3,54 @@ import subprocess as sp
 import os
 import sys
 import shutil
-from vu_common import pause
 
 vdebug = False
+
+
+#parallel stuff
+def get_workloads(tasks,max_nprocesses,chunksiz):
+    """
+    >>> wls = get_workloads(range(12),7,1); wls
+    [[0, 1], [2, 3], [4, 5], [6, 7], [8, 9], [10, 11]]
+
+
+    >>> wls = get_workloads(range(12),5,2); wls
+    [[0, 1], [2, 3], [4, 5], [6, 7], [8, 9, 10, 11]]
+
+    >>> wls = get_workloads(range(20),7,2); wls
+    [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10, 11], [12, 13, 14], [15, 16, 17], [18, 19]]
+
+
+    >>> wls = get_workloads(range(20),20,2); wls
+    [[0, 1], [2, 3], [4, 5], [6, 7], [8, 9], [10, 11], [12, 13], [14, 15], [16, 17], [18, 19]]
+
+    """
+
+    if __debug__:
+        assert len(tasks) >= 1, tasks
+        assert max_nprocesses >= 1, max_nprocesses
+        assert chunksiz >= 1, chunksiz
+
+    #determine # of processes
+    ntasks = len(tasks)
+    nprocesses = int(round(ntasks/float(chunksiz)))
+    if nprocesses > max_nprocesses:
+        nprocesses = max_nprocesses
+
+
+    #determine workloads 
+    cs = int(round(ntasks/float(nprocesses)))
+    workloads = []
+    for i in range(nprocesses):
+        s = i*cs
+        e = s+cs if i < nprocesses-1 else ntasks
+        wl = tasks[s:e]
+        if wl:  #could be 0, e.g., get_workloads(range(12),7,1)
+            workloads.append(wl)
+
+    return workloads
+
+
 
 #Template Ids
 TPL_VS     = 1
@@ -265,7 +310,6 @@ def tb(src, combs, no_bugfix, no_parallel, no_stop):
         wrs = wprocess(0, tasks, no_stop, no_bugfix, V=None, Q=None)
         
     else: #parallel
-        from vu_common import get_workloads
         from multiprocessing import (Process, Queue, Value,
                                      current_process, cpu_count)
         Q = Queue()

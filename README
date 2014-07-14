@@ -1,0 +1,9 @@
+Reproducing experiments for FSE paper for tcas
+
+- the C file must have a mainQ function, see e.g., in tests/tcas/orig
+
+- preprocess file with CIL
+$ for i in {1..41} do cilly bug$i.c --save-temps --noPrintLn --useLogicalOperators ; done
+
+- run program (e.g., on 64-core prime)
+for i in {1..41}; do  rm -rf /tmp/cece_* &> t; echo "***** BEGIN $i *******"; time ./tf ../test/tcas/orig/bug$i.cil.i ../test/tcas/tcas.orig.inputs ../test/tcas/tcas.orig.outputs --top_n_ssids 80 --min_sscore 0.01;  echo "****** DONE $i ******"; done
