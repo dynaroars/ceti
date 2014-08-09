@@ -22,6 +22,13 @@ CETI has been tested using the following setup:
 * Python 2.7
 * An installed KLEE version
 
+### Run examples ###
+$ cd ceti
+$ source klee_export.sh  #setup environments for llvm-gcc and klee
+$ make  #compile the program
+# execute on an example
+$ ./tf ../programs/examples/a.bug1.c ../programs/examples/a.inputs ../programs/examples/a.outputs
+
 
 
 ### Experimentations ###

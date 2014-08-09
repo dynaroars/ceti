@@ -32,7 +32,7 @@ let strip s =
 
 (*check if s1 is a substring of s2*)
 let in_str s1 s2 = 
-  try ignore(Str.search_forward (Str.regexp_string s1) s2 0); true
+  try ignore (Str.search_forward (Str.regexp_string s1) s2 0); true
   with Not_found -> false
 
 let str_split s:string list =  Str.split (Str.regexp "[ \t]+")  s
@@ -81,9 +81,9 @@ let copy_obj (x : 'a) =
   let s = Marshal.to_string x [] in (Marshal.from_string s 0 : 'a)
 
 (*create a temp dir*)
-let mk_tmp_dir ?(use_time=false) ?(temp_dir="") dprefix dsuffix = 
+let mkdir_tmp ?(use_time=false) ?(temp_dir="") dprefix dsuffix = 
   let dprefix = if use_time 
-    then P.sprintf "%s_%d" dprefix  (int_of_float (Unix.time())) 
+    then P.sprintf "%s_%d" dprefix (int_of_float (Unix.time())) 
     else dprefix 
   in 
   let dprefix = dprefix ^ "_" in 
@@ -103,10 +103,10 @@ let exec_cmd cmd =
     |Unix.WEXITED(0) -> ()
     |_ -> E.s(E.error "cmd failed '%s'" cmd)
 
-let chk_file_exist ?(msg="") (filename:string) : unit =
+let chk_exist ?(msg="") (filename:string) : unit =
   if not (Sys.file_exists filename) then (
     if msg <> "" then E.log "%s\n" msg;
-    E.s(E.error "file '%s' not exist" filename)
+    E.s (E.error "file '%s' not exist" filename)
   )
   
 let econtextMessage name d = 
@@ -116,6 +116,7 @@ let econtextMessage name d =
     ignore (Pretty.fprintf !E.logChannel  "%s: %a@!" name Pretty.insert d);
 
   E.showContext ()
+
 let ealert fmt : 'a = 
   let f d =
     if !E.colorFlag then output_string !E.logChannel E.purpleEscStr;
@@ -137,24 +138,27 @@ let gcc_cmd = P.sprintf "gcc %s -o %s >& /dev/null"
 let boolTyp:typ = intType
 type inp_t = int list 
 type outp_t = int 
-type testcase_t = inp_t * outp_t
+type testcase_t = inp_t*outp_t
 type sid_t = int
 
-(* Specific options for this program *)
+(* specific options for this program *)
+let progname:string = "CETI"
+let progname_long:string = "Correcting Errors using Test Inputs"
+let progversion:float = 0.1
+let mainfunname:string = "mainQ"
+
 let vdebug:bool ref = ref false
 let dlog s = if !vdebug then E.log "%s" s else ()
 let dalert s = if !vdebug then ealert "%s" s else ()
 
 
-
 let fl_ssids = ref [] (*manually provide fault loc info*)
-let fl_alg = ref 1 
+let fl_alg = ref 1 (*1: ochiai, ow: tarantula*)
 
 let no_global_vars = ref false
 let no_parallel = ref false
 let no_bugfix = ref false
 let no_stop = ref false
-
 
 let only_transform = ref false
 let ssid = ref (-1) (*only do transformation on vs_idxs*)
@@ -204,7 +208,7 @@ let string_of_stmt (s:stmt) = Pretty.sprint ~width:80 (dn_stmt () s)
 let string_of_exp (s:exp) = Pretty.sprint ~width:80 (dn_exp () s) 
 let string_of_instr (s:instr) = Pretty.sprint ~width:80 (dn_instr () s) 
 let string_of_lv (s:lval) = Pretty.sprint ~width:80 (dn_lval () s) 
-let string_of_list =   String.concat ", " 
+let string_of_list =  String.concat ", " 
 let string_of_ints (l:int list): string = string_of_list (L.map string_of_int l)
 
 let string_of_binop = function
@@ -304,6 +308,7 @@ end
 
 
 (******************* Initialize *******************)
+
 (*break conditional / loop guard to 
   if(complex_exp) to 
   int tmp = complex_exp; 
@@ -375,7 +380,6 @@ class breakCondVisitor = object(self)
 
 	  rs
 
-
 	|_ -> [s]
       in
       let stmts = L.flatten (L.map change_stmt b.bstmts) in
@@ -387,7 +391,7 @@ class breakCondVisitor = object(self)
 end
 
 
-(*Makes every instruction into its own statement*)
+(*Makes every instruction into its own stmt*)
 class everyVisitor = object
   inherit nopCilVisitor
   method vblock b = 
@@ -503,7 +507,8 @@ class uTest (filename:string) = object(self)
   (*read testcases *)
   method get_tcs (inputs:string) (outputs:string) = 
     
-    if !vdebug then E.log "read tcs from '%s' and '%s' for '%s'" inputs outputs filename;
+    if !vdebug then E.log "read tcs from '%s' and '%s' for '%s'" 
+      inputs outputs filename;
     
     let inputs = read_lines inputs in
     let outputs = read_lines outputs in 
@@ -547,12 +552,11 @@ class uTest (filename:string) = object(self)
       If yes then exit. If no then there's bug to fix*)
     let goods,bads = self#compare_outputs prog_output mytcs in 
     let nbads = L.length bads in
-    if nbads = 0 then (ealert "All tests passed ... no bug found. Exit !"; exit 0)
-    else (ealert "%d/%d tests failed ... bug found. Processing" nbads (L.length mytcs));
+    if nbads = 0 then (ealert "All tests passed. No bug found. Exit!"; exit 0)
+    else (ealert "%d/%d tests failed. Bug found. Processing .." nbads (L.length mytcs));
     
     mygoods <- goods;
     mybads <- bads
-
 
   (*partition tcs into 2 sets: good / bad*)
   method private compare_outputs 
@@ -572,6 +576,7 @@ class uTest (filename:string) = object(self)
   goods, bads
 
 end
+
 (******************* Fault Localization *******************)
 
 (*
@@ -614,7 +619,7 @@ class coverageVisitor = object(self)
     ChangeDoChildrenPost(f, action)
 end
 
-type sscore = int * float (* sid, suspicious score *)
+type sscore = int*float (* sscore = (sid,suspicious score) *)
 class faultloc 
   (ast:file) 
   (goods:testcase_t list) 
@@ -630,41 +635,44 @@ object(self)
   method fl : sid_t list = 
     E.log "*** Fault Localization ***\n";
 
-    assert (L.length goods > 0) ;
-    assert (L.length bads  > 0) ;
-
-    let ast_bn =  
-      let tdir = Filename.dirname ast.fileName in
-      let tdir = mk_tmp_dir ~temp_dir:tdir "fautloc" "" in
-      P.sprintf "%s/%s" tdir (Filename.basename ast.fileName) 
+    assert (L.length bads > 0) ;
+    let sscores:sscore list = 
+      if L.length goods = 0 then 
+	H.fold (fun sid _ rs -> (sid,!min_sscore)::rs) stmt_ht [] 
+      else
+	let ast_bn =  
+	  let tdir = Filename.dirname ast.fileName in
+	  let tdir = mkdir_tmp ~temp_dir:tdir "fautloc" "" in
+	  P.sprintf "%s/%s" tdir (Filename.basename ast.fileName) 
+	in
+	
+	(*create cov file*)
+	let fileName_cov = ast_bn ^ ".cov.c"  in
+	let fileName_path = ast_bn ^ ".path"  in
+	self#coverage (copy_obj ast) fileName_cov fileName_path;
+	
+	(*compile cov file*)
+	let prog:string = compile fileName_cov in
+	
+	(*run prog to obtain good/bad paths*)
+	let path_generic = ast_bn ^ ".path" in
+	let path_g = ast_bn ^ ".gpath" in
+	let path_b = ast_bn ^ ".bpath" in
+	
+	(*good path*)
+	mk_run_testscript (ast_bn ^ ".g.sh") prog 
+	  (ast_bn ^ ".outputs_g_dontcare") goods;
+	Unix.rename path_generic path_g;
+	
+	(*bad path*)
+	mk_run_testscript (ast_bn ^ ".b.sh") prog 
+	  (ast_bn ^ ".outputs_bad_dontcare") bads;
+	Unix.rename path_generic path_b;
+	
+	let n_g, ht_g = self#analyze_path path_g in
+	let n_b, ht_b = self#analyze_path path_b in
+	self#compute_sscores n_g ht_g n_b ht_b
     in
-
-    (*create cov file*)
-    let fileName_cov = ast_bn ^ ".cov.c"  in
-    let fileName_path = ast_bn ^ ".path"  in
-    self#coverage (copy_obj ast) fileName_cov fileName_path;
-
-    (*compile cov file*)
-    let prog:string = compile fileName_cov in
-
-    (*run prog to obtain good/bad paths*)
-    let path_generic = ast_bn ^ ".path" in
-    let path_g = ast_bn ^ ".gpath" in
-    let path_b = ast_bn ^ ".bpath" in
-    
-    (*good path*)
-    mk_run_testscript (ast_bn ^ ".g.sh") prog 
-      (ast_bn ^ ".outputs_g_dontcare") goods;
-    Unix.rename path_generic path_g;
-    
-    (*bad path*)
-    mk_run_testscript (ast_bn ^ ".b.sh") prog 
-      (ast_bn ^ ".outputs_bad_dontcare") bads;
-    Unix.rename path_generic path_b;
-
-    let n_g, ht_g = self#analyze_path path_g in
-    let n_b, ht_b = self#analyze_path path_b in
-    let sscores = self#compute_sscores n_g ht_g n_b ht_b in
 
     (*remove all susp stmts in main, which cannot have anything except call
       to mainQ, everything in main will be deleted when instrumenting main*)
@@ -676,16 +684,15 @@ object(self)
 	  !idx sid f.svar.vname score dn_stmt s;
 	incr idx;
 	true
-      )else false
-    )sscores in
-
+      ) else false
+    ) sscores in
 
     ealert "FL: found %d stmts with sscores >= %g" 
       (L.length sscores) !min_sscore;
     
     L.map fst sscores
 
-    
+      
   method private coverage (ast:file) (filename_cov:string) (filename_path:string) = 
 
   (*add printf stmts*)
@@ -741,12 +748,13 @@ object(self)
 
   method private compute_sscores 
     (n_g:int) (ht_g:(int,int) H.t) 
-    (n_b:int) (ht_b:(int,int) H.t) : sscore list=
+    (n_b:int) (ht_b:(int,int) H.t) : sscore list =
 
     assert(n_g <> 0);
     assert(n_b <> 0);
     
-    let alg = if !fl_alg = 1 then self#alg_ochiai else self#alg_tarantula in
+    let alg = if !fl_alg = 1 
+      then self#alg_ochiai else self#alg_tarantula in
 
     let ht_sids = H.create 1024 in 
     let set_sids ht =
@@ -757,8 +765,8 @@ object(self)
     set_sids ht_g ;
     set_sids ht_b ;
 
-    let n_g = float_of_int(n_g) in
-    let n_b = float_of_int(n_b) in
+    let n_g = float_of_int n_g in
+    let n_b = float_of_int n_b in
 
     let rs = H.fold (fun sid _ rs ->
       let get_n_occur sid (ht: (int,int) H.t) : float=
@@ -784,7 +792,7 @@ object(self)
     score(s) = bad(s)/sqrt(total_bad*(bad(s)+good(s)))
   *)
 
-  method private alg_tarantula  bad tbad good tgood =
+  method private alg_tarantula bad tbad good tgood =
       (bad /. tbad) /. ((good /. tgood) +. (bad /. tbad))
 
   method private alg_ochiai bad tbad good tgood = 
@@ -923,7 +931,7 @@ let mk_main (main_fd:fundec) (mainQ_fd:fundec) (tcs:testcase_t list)
 
   let instrs2, exps = L.split rs in 
 
-  (*creates reachability "goal" statement 
+  (*creates reachability "goal" stmt 
     if(e_1,..,e_n){printf("GOAL: uk0 %d, uk1 %d ..\n",uk0,uk1);klee_assert(0);}
   *)
   let s = L.map (fun vi -> vi.vname ^ " %d") uks in
@@ -992,23 +1000,24 @@ class virtual bugfixTemplate (cname:string) (cid:int) (level:int) = object
   method cid : int = cid
   method level: int = level
 
-  method virtual spy_stmt : string -> sid_t -> fundec -> instr -> string
+  method virtual spy_stmt : string -> sid_t -> fundec -> (instr -> string)
   method virtual mk_instr : file -> fundec -> int -> int -> int list -> string -> 
     (instr -> varinfo list ref -> instr list ref -> instr)
 end 
 
 
 (*Const Template:
-  replace all consts found in an exp to a paramter*)
+  replace all consts found in an exp to a parameter*)
 
 class bugfixTemplate_CONSTS cname cid level = object(self)
     
   inherit bugfixTemplate cname cid level as super
 
-  (*returns the n, the number of consts found in exp
-    This product 1 template statements with n params
+  (*returns n, the number of consts found in exp
+    This produces 1 template stmt with n params
   *)
-  method spy_stmt (filename_unused:string) (sid:sid_t) (fd:fundec) = function
+  method spy_stmt (filename_unused:string) (sid:sid_t) (fd:fundec)
+    : (instr -> string) = function
   |Set (_,e,_) ->
     let rec find_consts ctr e: int = match e with
       |Const _ -> succ ctr
@@ -1036,7 +1045,7 @@ class bugfixTemplate_CONSTS cname cid level = object(self)
   (*idxs e.g., [3] means 3 consts found in the susp stmt*)
   method mk_instr (ast:file) (main_fd:fundec) (ssid:int)  
     (tpl_id_unused:int) (idxs:int list) (xinfo:string) 
-    :(instr -> varinfo list ref -> instr list ref -> instr) = 
+    : (instr -> varinfo list ref -> instr list ref -> instr) = 
 
     assert (L.length idxs = 1);
     let n_consts = L.hd idxs in
@@ -1082,11 +1091,12 @@ class bugfixTemplate_OPS_PR cname cid level = object(self)
   initializer
   let ops_ls = [A.to_list logic_bops; A.to_list comp_bops; A.to_list arith_bops] in
   L.iter(fun bl -> L.iter (fun b -> H.add ops_ht b bl) bl) ops_ls;
-      
-  E.log "%s: create bops ht (len %d)\n" super#cname (H.length ops_ht)
+
+  if !vdebug then 
+    E.log "%s: create bops ht (len %d)\n" super#cname (H.length ops_ht)
     
   (*returns n, the number of supported ops in an expression
-    This produces n template statements
+    This produces n template stmts
   *)
   method spy_stmt (filename_unused:string) (sid:sid_t) (fd:fundec) = function
   |Set (_,e,_) ->
@@ -1178,7 +1188,7 @@ end
 
     
 
-(*Brute force way to generate template statements (no params)*)
+(*Brute force way to generate template stmts (no params)*)
 class bugfixTemplate_OPS_BF cname cid level = object(self)
   inherit bugfixTemplate cname cid level as super
 
@@ -1204,14 +1214,14 @@ class bugfixTemplate_OPS_BF cname cid level = object(self)
   (* 	[|LAnd; LOr|]; *)
   (* 	[|Lt; Gt; Le; Ge; Eq; Ne|] *)
   (*     ]; *)
-    
-  E.log "%s: create bops ht (len %d)\n" super#cname (H.length ops_ht)
+  if !vdebug then 
+    E.log "%s: create bops ht (len %d)\n" super#cname (H.length ops_ht)
 
   (*if e has n ops supported by this class then returns a list of n ints 
     representing the number of compatible ops of each of the n ops,
     e.g., [7 3] means op1 in e has 7 compat ops, op2 has 3 compat ops.
 
-    This (brute force) produces cartesian_product(list) template statements,
+    This (brute force) produces cartesian_product(list) template stmts,
     but each has 0 params.
   *)
   method spy_stmt (filename_unused:string) (sid:sid_t) (fd:fundec) = function
@@ -1314,7 +1324,7 @@ class bugfixTemplate_VS cname cid level = object(self)
   |Set _ ->
     (*Find vars in sfd have type bool*)
     let bvs = ref [] in
-    ignore(visitCilFunction ((new findBoolVars) bvs) fd);
+    ignore (visitCilFunction ((new findBoolVars) bvs) fd);
     let bvs = !bvs in
 
     (*obtain usuable variables from fd*)
@@ -1432,7 +1442,7 @@ let transform
 
   let main_fd = find_fun ast "main" in 
 
-  (*modify statement*)  
+  (*modify stmt*)  
   let cl = L.find (fun cl -> cl#cid = tpl_id ) tpl_classes in 
   let mk_instr:(instr-> varinfo list ref -> instr list ref -> instr) = 
     cl#mk_instr ast main_fd ssid tpl_id idxs xinfo in
@@ -1468,8 +1478,9 @@ let () = begin
   let filename = ref "" in
   let inputs   = ref "" in
   let outputs  = ref "" in 
-  
-  let version = P.sprintf "Vug's bug fixer: v0.1 (Cil version %s)" cilVersion in 
+  let version = P.sprintf "%s (%s) %f (CIL version %s)" 
+    progname progname_long progversion cilVersion 
+  in 
 
   let arg_descrs = [
     "--debug", Arg.Set vdebug, 
@@ -1542,7 +1553,7 @@ let () = begin
 
   let handle_arg s =
     if !filename = "" then (
-      chk_file_exist s ~msg:"require filename"; filename := s
+      chk_exist s ~msg:"require filename"; filename := s
     )
     else if !inputs = "" then inputs := s
     else if !outputs = "" then outputs := s
@@ -1575,12 +1586,12 @@ let () = begin
     printf(mainQ);...
     }
   *)
-
-  chk_file_exist !inputs  ~msg:"require inputs file";
-  chk_file_exist !outputs ~msg:"require outputs file";
+  
+  chk_exist !inputs  ~msg:"require inputs file";
+  chk_exist !outputs ~msg:"require outputs file";
 
   (*create a temp dir to process files*)
-  let tdir = mk_tmp_dir "cece" "" in
+  let tdir = mkdir_tmp progname "" in
   let fn' = P.sprintf "%s/%s" tdir (Filename.basename !filename) in 
   exec_cmd (P.sprintf "cp %s %s" !filename fn');
   
@@ -1600,7 +1611,7 @@ let () = begin
   write_src (ast.fileName ^ ".preproc.c") ast;
 
   if !only_peek then (
-    ignore(visitCilFileSameGlobals ((new peekVisitor) !ssid) ast);
+    ignore (visitCilFileSameGlobals ((new peekVisitor) !ssid) ast);
     exit 0);
 
 
@@ -1609,14 +1620,14 @@ let () = begin
     if L.length !fl_ssids > 0 then !fl_ssids else (
       let flVis = (new faultloc) ast tcObj#mygoods tcObj#mybads stmt_ht in
       let ssids' = flVis#fl  in
-      take !top_n_ssids ssids')   (*only consider ntop ones*)
+      take !top_n_ssids ssids')   (*only consider n top ones*)
   in 
 
-  if L.length ssids = 0 then (ealert "No suspicious statements !";exit 0);
+  if L.length ssids = 0 then (ealert "No suspicious stmts !"; exit 0);
 			      
   (*** transformation and bug fixing ***)
-  (*find mainQ*)
-  let mainQ_fd = find_fun ast "mainQ" in
+  (* find mainQ *)
+  let mainQ_fd = find_fun ast mainfunname in
   
   if not !no_global_vars then (
     iterGlobals ast (function 
@@ -1637,9 +1648,9 @@ let () = begin
   let rs = L.map (spy ast.fileName stmt_ht) ssids in
   let rs' = L.filter (function |[] -> false |_ -> true) rs in
   let rs = L.filter (fun c -> c <> "") (L.flatten rs') in
-  ealert "Spy: Got %d infos from %d ssids" (L.length rs) (L.length rs');
+  ealert "Spy: Got %d info from %d ssids" (L.length rs) (L.length rs');
   
-  if (L.length rs) = 0 then (ealert "No info spied .. Exiting"; exit 0);
+  if (L.length rs) = 0 then (ealert "No spied info. Exit!"; exit 0);
     
   (*call Python script to do transformation*)
   let rs = String.concat "; " rs in
