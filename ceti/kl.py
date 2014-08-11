@@ -6,7 +6,6 @@ import shutil
 
 vdebug = False
 
-
 #parallel stuff
 def get_workloads(tasks,max_nprocesses,chunksiz):
     """
@@ -101,16 +100,15 @@ def get_data(tpl, data_l):
     return rs
 
 #call ocaml prog to transform file
-def worker_transform(wid, src, sid, tpl, xinfo, idxs):
+def worker_transform(wid, src, sids, tpl, xinfo, idxs):
     #$ ./tf /tmp/cece_1392070907_eedfba/p.c 
-    #--only_transform --ssid 3 --tpl 1 --xinfo z3_c0 --idxs "0 1"
+    #--only_transform --sids "3" --tpl 1 --xinfo z3_c0 --idxs "0 1"
     
-    if vdebug: print ('worker {}: transform {} sid {} tpl {} xinfo {} idxs {} ***'
-                      .format(wid, src,tpl,sid,xinfo,idxs))
-    
+    if vdebug: print ('worker {}: transform {} sids {} tpl {} xinfo {} idxs {} ***'
+                      .format(wid, src,tpl,sids,xinfo,idxs))
     cmd = ('./tf {} '
-           '--only_transform --ssid {} --tpl {} --idxs "{}" --xinfo {}{}'
-           .format(src,sid,tpl,idxs,xinfo, 
+           '--only_transform --sids "{}" --tpl {} --idxs "{}" --xinfo {}{}'
+           .format(src,sids,tpl,idxs,xinfo, 
                    " --debug" if vdebug else ""))
                    
     if vdebug: print "$ {}".format(cmd)
@@ -228,11 +226,12 @@ def worker_klee (wid, src):
     return None
         
 
-def worker_tb(wid, src, sid, tpl, cid, idxs, no_bugfix):
+def worker_tb(wid, src, sids, tpl, cid, idxs, no_bugfix):
+    sids = " ".join(map(str,sids))
     idxs = " ".join(map(str,idxs))
     xinfo = "t{}_z{}_c{}".format(tpl,len(idxs),cid)
 
-    r = worker_transform(wid, src, sid, tpl, xinfo, idxs)
+    r = worker_transform(wid, src, sids, tpl, xinfo, idxs)
     assert len(r) == 3
     src,old_stmt,new_stmt = r
 
@@ -252,13 +251,13 @@ def worker_tb(wid, src, sid, tpl, cid, idxs, no_bugfix):
 def wprocess(wid, tasks, no_stop,no_bugfix,V,Q):
 
     tasks = sorted(tasks, 
-                   key=lambda (src,sid,tpl,tpl_level,cid,idxs): 
+                   key=lambda (src,sids,tpl,tpl_level,cid,idxs): 
                    (tpl_level, len(idxs)))
                    
 
     if no_stop:
-        rs = [worker_tb(wid, src, sid, tpl, cid, idxs, no_bugfix) 
-              for src, sid, tpl, tpl_level, cid, idxs in tasks]
+        rs = [worker_tb(wid, src, sids, tpl, cid, idxs, no_bugfix) 
+              for src, sids, tpl, tpl_level, cid, idxs in tasks]
 
         if Q is None: #no parallel
             return rs
@@ -269,8 +268,8 @@ def wprocess(wid, tasks, no_stop,no_bugfix,V,Q):
     else: #break after finding a fix 
         rs = []
         if Q is None:  #no parallel
-            for src, sid, tpl, tpl_level, cid, idxs in tasks:
-                r = worker_tb(wid, src, sid, tpl, cid, idxs, no_bugfix)
+            for src, sids, tpl, tpl_level, cid, idxs in tasks:
+                r = worker_tb(wid, src, sids, tpl, cid, idxs, no_bugfix)
                 if r: 
                     if vdebug: print "worker {}: sol found, break !".format(wid)
                     rs.append(r)
@@ -278,12 +277,12 @@ def wprocess(wid, tasks, no_stop,no_bugfix,V,Q):
             return rs
 
         else: #parallel
-            for src, sid, tpl, tpl_level, cid, idxs in tasks:
+            for src, sids, tpl, tpl_level, cid, idxs in tasks:
                 if V.value > 0: 
                     if vdebug: print "worker {}: sol found, break !".format(wid)
                     break
                 else:
-                    r = worker_tb(wid, src, sid, tpl, cid, idxs, no_bugfix)
+                    r = worker_tb(wid, src, sids, tpl, cid, idxs, no_bugfix)
                     if r: 
                         rs.append(r)
                         V.value = V.value + 1
@@ -296,9 +295,9 @@ def wprocess(wid, tasks, no_stop,no_bugfix,V,Q):
 def tb(src, combs, no_bugfix, no_parallel, no_stop):
 
     tasks = []
-    for sid,tpl,tpl_level, l in combs:
+    for sids,tpl,tpl_level,l in combs:
         rs_ = get_data(tpl,l)
-        rs_ = [(src, sid, tpl, tpl_level) + r for r in rs_]
+        rs_ = [(src, sids, tpl, tpl_level) + r for r in rs_]
         tasks.extend(rs_)
 
     from random import shuffle
@@ -348,16 +347,16 @@ if __name__ == "__main__":
     aparser.add_argument("--debug",
                          help="shows debug info ",
                          action="store_true")
-                         
-    aparser.add_argument("--no_parallel",
-                         help="don't use multiprocessing",
-                         action="store_true")
 
     aparser.add_argument("--do_tb",
                          help='transform file and bug fix, e.g.,'\
                              '--do_tb "(1,1,5); (5,1,2); (9,1,5)"',
                          dest='clist',
                          action="store")
+                         
+    aparser.add_argument("--no_parallel",
+                         help="don't use multiprocessing",
+                         action="store_true")
                         
     aparser.add_argument("--no_bugfix",
                          help="don't run klee to find fixes",
@@ -366,30 +365,32 @@ if __name__ == "__main__":
     aparser.add_argument("--no_stop",
                          action="store_true",
                          help="don't stop after finding a fix")
-                         
 
+    aparser.add_argument("--only_synthesis",
+                         action="store_true",
+                         help='synthesize program '\
+                             '(find missing values simultaneously)')
+                         
     args = aparser.parse_args()
 
     vdebug = args.debug
 
     assert args.clist         #[(1,5), (5,2), (9,5)]
+    split_ = lambda l: l.strip().split() #1 2 3 -> [1,2,3]
+
     clist = [c.strip() for c in args.clist.split(";")]
     clist = [c[1:][:-1] for c in clist] #remove ( )
     clist = [c.split(',') for c in clist]
 
-    clist = [(int(c[0]), #stmt id
+    clist = [([int(c_) for c_ in split_(c[0])], #stmt id
               int(c[1]), #template id
               int(c[2]), #template level
-              [int(c_) for c_ in c[3].strip().split()]) #data
+              [int(c_) for c_ in split_(c[3])]) #data
              for c in clist]
-
+    print clist
+    
     tb(args.file,
         clist,
         no_bugfix=args.no_bugfix,
         no_parallel=args.no_parallel,
         no_stop=args.no_stop)
-
-             
-                         
-
-

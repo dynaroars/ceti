@@ -77,6 +77,14 @@ let rec take n = function
 (*   | h::t as l -> if n = 0 then l else drop (n-1)  *)
 
 let rec range ?(a=0) b = if a >= b then [] else a::range ~a:(succ a) b 
+
+(*[Some 1, None, Some 2] -> [1,2]*)
+let list_of_some (l:'a option list):'a list = 
+  let rs = 
+    L.fold_left (fun l' -> function |Some f -> f::l' |None -> l') [] l
+  in L.rev rs
+
+  
 let copy_obj (x : 'a) = 
   let s = Marshal.to_string x [] in (Marshal.from_string s 0 : 'a)
 
@@ -106,7 +114,7 @@ let exec_cmd cmd =
 let chk_exist ?(msg="") (filename:string) : unit =
   if not (Sys.file_exists filename) then (
     if msg <> "" then E.log "%s\n" msg;
-    E.s (E.error "file '%s' not exist" filename)
+    E.s(E.error "file '%s' not exist" filename)
   )
   
 let econtextMessage name d = 
@@ -130,7 +138,7 @@ let ealert fmt : 'a =
 (*filename formats*)
 let ginfo_s = P.sprintf "%s.info" (*f.c.info*)
 let arr_s = P.sprintf "%s.s%d.t%d.arr" (*f.c.s1.t3.arr*)
-let transform_s = P.sprintf "%s.s%d.%s.tf.c" (*f.c.s5.z3_c2.tf.c*)
+let transform_s = P.sprintf "%s.s%s.%s.tf.c" (*f.c.s5.z3_c2.tf.c*)
 
 (*commands*)
 let gcc_cmd = P.sprintf "gcc %s -o %s >& /dev/null"
@@ -140,19 +148,41 @@ type inp_t = int list
 type outp_t = int 
 type testcase_t = inp_t*outp_t
 type sid_t = int
+type spy_t = sid_t list*int*int*int list (*sid,cid,level,idxs*)
+
+let string_of_spys ((sids,cid,level,idxs):spy_t) : string = 
+  let sid' = (String.concat " " (L.map string_of_int sids)) in
+  let idxs' = (String.concat " " (L.map string_of_int idxs)) in
+  P.sprintf "(%s, %d, %d, %s)" sid' cid level idxs'
+
+let group_sids (sids:sid_t list) (l:spy_t list): spy_t list = 
+
+  let l0,l1 = L.partition (fun (sids',_,_,_) -> 
+    assert (L.length sids' = 1);
+    L.mem (L.hd sids') sids) l 
+  in
+
+  let l1 = L.map (fun (sids,t,l,i) -> (sids,t,l,i)) l1 in
+  if L.length l0 = 0 then
+    l1
+  else
+    let _,t,l,i = L.hd l0 in
+    let sids':sid_t list list = L.map (fun (s,_,_,_) -> s) l0 in 
+    [(L.flatten sids',t,l,i)]@l1
+
 
 (* specific options for this program *)
 let progname:string = "CETI"
 let progname_long:string = "Correcting Errors using Test Inputs"
 let progversion:float = 0.1
 let mainfunname:string = "mainQ"
+let synvarname:string = "ceti_q"
 
 let vdebug:bool ref = ref false
 let dlog s = if !vdebug then E.log "%s" s else ()
 let dalert s = if !vdebug then ealert "%s" s else ()
 
-
-let fl_ssids = ref [] (*manually provide fault loc info*)
+let fl_sids = ref [] (*manually provide fault loc info*)
 let fl_alg = ref 1 (*1: ochiai, ow: tarantula*)
 
 let no_global_vars = ref false
@@ -161,14 +191,14 @@ let no_bugfix = ref false
 let no_stop = ref false
 
 let only_transform = ref false
-let ssid = ref (-1) (*only do transformation on vs_idxs*)
+let only_synthesis = ref false
+let sids = ref [] (*only do transformation on vs_idxs*)
 let tpl = ref 0
 let idxs = ref []
-let xinfo = ref "" (*helpful info for debuggin*)
+let xinfo = ref "" (*helpful info for debugging*)
 
 let only_spy = ref false
 let only_peek = ref false (*for debugging only, peeking at specific stmt*)
-
 
 let python_script = "kl.py" (*name of the python script, must be in same dir*)
 
@@ -178,7 +208,7 @@ let uk_min :int = -1
 let uk_max :int =  1
 
 let min_sscore:float ref = ref 0.5
-let top_n_ssids:int ref = ref 10
+let top_n_sids:int ref = ref 10
 let tpl_ids:int list ref = ref [] (*apply only these specific template ids*)
 let tpl_level:int ref = ref 4 (*apply only templates with <= levels*)
 let extra_vars:varinfo list ref = ref []
@@ -192,7 +222,7 @@ let find_fun (ast:file) (funname:string) : fundec =
   );
   match !fd with
   |Some f -> f
-  |None -> E.s (E.error "fun '%s' not in '%s'!" funname ast.fileName)
+  |None -> E.s(E.error "fun '%s' not in '%s'!" funname ast.fileName)
 
 
 let mk_vi ?(ftype=TVoid []) fname: varinfo = makeVarinfo true fname ftype
@@ -208,8 +238,9 @@ let string_of_stmt (s:stmt) = Pretty.sprint ~width:80 (dn_stmt () s)
 let string_of_exp (s:exp) = Pretty.sprint ~width:80 (dn_exp () s) 
 let string_of_instr (s:instr) = Pretty.sprint ~width:80 (dn_instr () s) 
 let string_of_lv (s:lval) = Pretty.sprint ~width:80 (dn_lval () s) 
-let string_of_list =  String.concat ", " 
-let string_of_ints (l:int list): string = string_of_list (L.map string_of_int l)
+let string_of_list ?(delim:string = ", ") =  String.concat delim
+let string_of_ints ?(delim:string = ", ") (l:int list): string = 
+  string_of_list ~delim (L.map string_of_int l)
 
 let string_of_binop = function
   |Lt -> "<"
@@ -228,7 +259,7 @@ let string_of_binop = function
   |Shiftlt -> "<<"
   |Shiftrt -> ">>"
     
-  |_ -> E.s (E.error "unknown binop")
+  |_ -> E.s(E.error "unknown binop")
 
 let string_of_unop = function
   |Neg -> "unary -"
@@ -301,10 +332,33 @@ class findBoolVars (bvs:varinfo list ref) = object
 
   method vstmt (s:stmt) = 
     match s.skind with 
-    |If(Lval (Var vi,_),_,_,_) -> bvs := vi::!bvs; DoChildren  
+    |If(Lval(Var vi,_),_,_,_) -> bvs := vi::!bvs; DoChildren  
     |_->DoChildren
 
 end
+
+let find_boolvs fd = 
+  let bvs:varinfo list ref = ref [] in
+  ignore (visitCilFunction ((new findBoolVars) bvs) fd);
+  L.rev !bvs
+
+(*Find statements of the form 
+  ceti_q = dummyVal; 
+*)
+class findSynStmts (sids:sid_t list ref) = object
+  inherit nopCilVisitor
+  method vstmt (s:stmt) = 
+    match s.skind with 
+    |Instr[Set((Var vi,_),Const _,_)] when in_str synvarname vi.vname ->
+      sids := s.sid::!sids; 
+      DoChildren  
+    |_->DoChildren
+end
+
+let find_synstmts ast = 
+  let sids:sid_t list ref = ref [] in
+  ignore (visitCilFileSameGlobals ((new findSynStmts) sids) ast);
+  L.rev !sids
 
 
 (******************* Initialize *******************)
@@ -328,7 +382,7 @@ class breakCondVisitor = object(self)
       | Some f -> f | None -> E.s(E.error "not in a function") in
     let v:lval = var(makeTempVar fd (typeOf e)) in
     let i:instr = Set(v,e,loc) in
-    v, {s with skind = Instr [i]} 
+    v, {s with skind = Instr[i]} 
 
   (* method private can_break e =  *)
   (*   match e with  *)
@@ -366,7 +420,7 @@ class breakCondVisitor = object(self)
 	  rs
 
 	(*x = a?b:c  -> if(a){x=b}{x=c} *)
-	|Instr [Set (lv,Question (e1,e2,e3,ty),loc)] ->
+	|Instr[Set(lv,Question (e1,e2,e3,ty),loc)] ->
 	  let i1,i2 = Set(lv,e2,loc), Set(lv,e3,loc) in
 	  let sk = If(e1,
 		      mkBlock [mkStmtOneInstr i1],
@@ -420,7 +474,7 @@ class numVisitor ht = object(self)
 
   (*Stmts that can be tracked for fault loc and modified for bug fix *)
   method private can_modify : stmtkind -> bool = function 
-  |Instr [Set(_)] -> true
+  |Instr[Set(_)] -> true
   |_ -> false
 
   method vblock b = 
@@ -482,7 +536,7 @@ let mk_run_testscript testscript prog prog_output tcs =
     
 (*********************** Testcases ***********************)
 
-let string_of_tc (tc:inp_t * outp_t) : string = 
+let string_of_tc (tc:inp_t*outp_t) : string = 
   let inp,outp = tc in 
   let inp = String.concat "; " (L.map string_of_int inp) in
   let outp = string_of_int outp in 
@@ -624,7 +678,7 @@ class faultloc
   (ast:file) 
   (goods:testcase_t list) 
   (bads:testcase_t list) 
-  (stmt_ht:(sid_t,stmt*fundec) H.t)= 
+  (stmt_ht:(sid_t,stmt*fundec) H.t) = 
 object(self)
 
   val ast = ast
@@ -825,11 +879,11 @@ and peek_instr ins: string =
   |Call _ -> "Call"
   |_ -> "(unimp instr: "  ^ string_of_instr ins ^ ")"
     
-class peekVisitor sid = object(self)
+class peekVisitor sids = object(self)
   inherit nopCilVisitor
   method vstmt s = 
-    if s.sid = sid then (
-      ealert "Peek: ssid %d\n%a" s.sid dn_stmt s;
+    if L.mem s.sid sids then (
+      ealert "Peek: sid %d\n%a" s.sid dn_stmt s;
       match s.skind with 
       |Instr ins -> 
 	let rs = L.map peek_instr ins in 
@@ -858,16 +912,16 @@ class funInstrVisitor (uks:varinfo list) = object
 end
 
 (*insert uk's as input to all function calls
-e.g., fun(x); -> fun(x,uk0,uk1); *)
+  e.g., fun(x); -> fun(x,uk0,uk1); *)
 class instrCallVisitor (uks:varinfo list) (funs_ht:(string,unit) H.t)= object
   inherit nopCilVisitor
 
   method vinst (i:instr) =
     match i with 
-    | Call(lvopt,(Lval(Var(va),NoOffset)), args,loc) 
-	when H.mem funs_ht va.vname ->
+    | Call(lvopt,(Lval(Var(vi),NoOffset)), args,loc) 
+	when H.mem funs_ht vi.vname ->
       let uks' = L.map exp_of_vi uks in 
-      let i' = Call(lvopt,(Lval(Var(va),NoOffset)), args@uks',loc) in
+      let i' = Call(lvopt,(Lval(Var(vi),NoOffset)), args@uks',loc) in
       ChangeTo([i'])
 
     |_ -> SkipChildren
@@ -952,8 +1006,9 @@ let mk_main (main_fd:fundec) (mainQ_fd:fundec) (tcs:testcase_t list)
   let instrs_skind:stmtkind = Instr(instrs1@instrs2) in
   [mkStmt instrs_skind; mkStmt if_skind]
 
-
-class modStmtVisitor (ssid:int) 
+(* modify statements *)
+class modStmtVisitor 
+  (sids:int list) 
   (mk_instr:instr -> varinfo list ref -> instr list ref -> instr) = 
 object (self)
 
@@ -968,16 +1023,16 @@ object (self)
   method status = status
 
   method vstmt (s:stmt) = 
-    let action (s: stmt) :stmt = 
+    let action (s:stmt): stmt = 
       (match s.skind with 
-      |Instr ins when s.sid = ssid ->
+      |Instr ins when L.mem s.sid sids ->
 	assert (L.length ins = 1);
 
-	(*ealert "debug: stmt %d\n%a\n" ssid dn_stmt s;*)
+	(*ealert "debug: stmt %d\n%a\n" sid dn_stmt s;*)
 
 	let old_i = L.hd ins in 
 	let new_i = mk_instr old_i uks instrs in	
-	s.skind <- Instr [new_i];
+	s.skind <- Instr[new_i];
 
 	status <- (P.sprintf "%s ## %s"  (*the symbol is used when parsing*)
 		  (string_of_instr old_i) (string_of_instr new_i));
@@ -996,11 +1051,11 @@ class virtual bugfixTemplate (cname:string) (cid:int) (level:int) = object
   val cid = cid
   val level = level
 
-  method cname: string = cname
-  method cid : int = cid
-  method level: int = level
+  method cname : string = cname
+  method cid   : int = cid
+  method level : int = level
 
-  method virtual spy_stmt : string -> sid_t -> fundec -> (instr -> string)
+  method virtual spy_stmt : string -> sid_t -> fundec -> (instr -> spy_t option)
   method virtual mk_instr : file -> fundec -> int -> int -> int list -> string -> 
     (instr -> varinfo list ref -> instr list ref -> instr)
 end 
@@ -1017,8 +1072,8 @@ class bugfixTemplate_CONSTS cname cid level = object(self)
     This produces 1 template stmt with n params
   *)
   method spy_stmt (filename_unused:string) (sid:sid_t) (fd:fundec)
-    : (instr -> string) = function
-  |Set (_,e,_) ->
+    : (instr -> spy_t option) = function
+  |Set(_,e,_) ->
     let rec find_consts ctr e: int = match e with
       |Const _ -> succ ctr
       |Lval _ -> ctr
@@ -1034,16 +1089,14 @@ class bugfixTemplate_CONSTS cname cid level = object(self)
     
     if !vdebug then E.log "%s: found %d consts\n" super#cname n_consts;
 
-    if n_consts > 0 then 
-      P.sprintf "(%d, %d, %d, %d)" sid super#cid super#level n_consts
+    if n_consts > 0 then Some([sid],super#cid,super#level,[n_consts])
+    else None
       
-    else ""
-      
-  |_ -> ""
+  |_ -> None
 
 
   (*idxs e.g., [3] means 3 consts found in the susp stmt*)
-  method mk_instr (ast:file) (main_fd:fundec) (ssid:int)  
+  method mk_instr (ast:file) (main_fd:fundec) (sid_unused:int)  
     (tpl_id_unused:int) (idxs:int list) (xinfo:string) 
     : (instr -> varinfo list ref -> instr list ref -> instr) = 
 
@@ -1055,7 +1108,7 @@ class bugfixTemplate_CONSTS cname cid level = object(self)
       let mk_exp (e:exp): exp = 
 	let new_uk uid = mk_uk uid 
 	  uk_const_min uk_const_max main_fd uks instrs in
-	let ctr = ref 0 in
+	let ctr = ref (L.length !uks) in
 	
 	let rec find_const e = match e with
 	  |Const _ -> let vi = new_uk !ctr in incr ctr; exp_of_vi vi
@@ -1076,7 +1129,6 @@ class bugfixTemplate_CONSTS cname cid level = object(self)
       |Set(v,e,l) -> Set(v, mk_exp e, l)
       |_ -> E.s(E.error "unexp assignment instr %a" d_instr a_i)
     )
-
 end
 
 let logic_bops = [|LAnd; LOr|] 
@@ -1086,8 +1138,8 @@ let arith_bops = [|PlusA; MinusA|]
 (*Template for creating parameterized ops*)
 class bugfixTemplate_OPS_PR cname cid level = object(self)
   inherit bugfixTemplate cname cid level as super 
-
   val ops_ht:(binop, binop list) H.t = H.create 128
+
   initializer
   let ops_ls = [A.to_list logic_bops; A.to_list comp_bops; A.to_list arith_bops] in
   L.iter(fun bl -> L.iter (fun b -> H.add ops_ht b bl) bl) ops_ls;
@@ -1098,8 +1150,9 @@ class bugfixTemplate_OPS_PR cname cid level = object(self)
   (*returns n, the number of supported ops in an expression
     This produces n template stmts
   *)
-  method spy_stmt (filename_unused:string) (sid:sid_t) (fd:fundec) = function
-  |Set (_,e,_) ->
+  method spy_stmt (filename_unused:string) (sid:sid_t) (fd:fundec)
+    : (instr -> spy_t option) = function
+  |Set(_,e,_) ->
     let rec find_ops ctr e: int = match e with
       |Const _ -> ctr
       |Lval _ -> ctr
@@ -1117,16 +1170,13 @@ class bugfixTemplate_OPS_PR cname cid level = object(self)
     
     if !vdebug then E.log "%s: found %d ops\n" super#cname n_ops;
 
-    if n_ops > 0 then 
-      P.sprintf "(%d, %d, %d, %d)" sid super#cid super#level n_ops
+    if n_ops > 0 then Some([sid],super#cid,super#level,[n_ops])
+    else None
       
-    else ""
-      
-  |_ -> ""
-
+  |_ -> None
 
   (*idxs e.g., [3] means do the 3rd ops found in the susp stmt*)
-  method mk_instr (ast:file) (main_fd:fundec) (ssid:int)  
+  method mk_instr (ast:file) (main_fd:fundec) (sid:int)  
     (tpl_id_unused:int) (idxs:int list) (xinfo:string) 
     :(instr -> varinfo list ref -> instr list ref -> instr) = 
 
@@ -1186,11 +1236,15 @@ class bugfixTemplate_OPS_PR cname cid level = object(self)
 
 end
 
-    
 
 (*Brute force way to generate template stmts (no params)*)
 class bugfixTemplate_OPS_BF cname cid level = object(self)
   inherit bugfixTemplate cname cid level as super
+
+  (*sid cid level idxs, where, e.g., idxs = [3, 5, 7] means, 
+    replace the first op with classOf(op)[3],
+    the second op with classOf(op)[5],
+    the third op with classOf(op)[7]*)
 
   val ops_ht:(binop, binop array) H.t = H.create 128
   initializer
@@ -1224,8 +1278,10 @@ class bugfixTemplate_OPS_BF cname cid level = object(self)
     This (brute force) produces cartesian_product(list) template stmts,
     but each has 0 params.
   *)
-  method spy_stmt (filename_unused:string) (sid:sid_t) (fd:fundec) = function
-  |Set (_,e,_) ->
+  method spy_stmt (filename_unused:string) (sid:sid_t) (fd:fundec) 
+    : (instr -> spy_t option) = function
+
+  |Set(_,e,_) ->
     let rec find_ops l e: binop list = match e with
       |Const _ -> l
       |Lval  _ -> l
@@ -1254,19 +1310,12 @@ class bugfixTemplate_OPS_BF cname cid level = object(self)
     if !vdebug then E.log "%s: found %d ops [%s]\n" 
       super#cname len (string_of_list (L.map string_of_binop ops));
 
-    if len > 0 then
-      P.sprintf "(%d, %d, %d, %s)" sid super#cid super#level
-	(String.concat " " (L.map string_of_int ops_lens))
-    else
-      ""
-  |_ -> ""
+    if len > 0 then Some([sid],super#cid,super#level,ops_lens)
+    else None
+      
+  |_ -> None
 
-  (*idxs = [3, 5, 7] means, 
-    replace the first op with classOf(op)[3],
-    the second op with classOf(op)[5],
-    the third op with classOf(op)[7]
-  *)
-  method mk_instr (ast:file) (main_fd:fundec) (ssid:int) 
+  method mk_instr (ast:file) (main_fd:fundec) (sid:int) 
     (tpl_id_unused:int) (idxs:int list) (xinfo:string) 
     :(instr -> varinfo list ref -> instr list ref -> instr) = 
 
@@ -1320,12 +1369,11 @@ end
 class bugfixTemplate_VS cname cid level = object(self)
   inherit bugfixTemplate cname cid level as super
 
-  method spy_stmt (filename:string) (sid:sid_t) (fd:fundec)  = function
+  method spy_stmt (filename:string) (sid:sid_t) (fd:fundec) 
+    : (instr -> spy_t option) = function
+
   |Set _ ->
-    (*Find vars in sfd have type bool*)
-    let bvs = ref [] in
-    ignore (visitCilFunction ((new findBoolVars) bvs) fd);
-    let bvs = !bvs in
+    let bvs = find_boolvs fd in (*Find vars in sfd have type bool*)
 
     (*obtain usuable variables from fd*)
     let vs' = fd.sformals@fd.slocals in
@@ -1339,27 +1387,26 @@ class bugfixTemplate_VS cname cid level = object(self)
       not (in_str "tmp___" vi.vname)
     in
     let vs = L.filter vi_pred vs' in
-    let len = L.length vs in
+    let n_vs = L.length vs in
     
     if !vdebug then (
       E.log "%s: found %d/%d avail vars in fun %s [%s]\n"
-    	super#cname len (L.length vs') fd.svar.vname 
+    	super#cname n_vs (L.length vs') fd.svar.vname 
 	(String.concat ", " (L.map (fun vi -> vi.vname) vs))
     );
     
-    if len > 0 then(
+    if n_vs > 0 then(
       write_file_bin (arr_s filename sid super#cid) (A.of_list vs);
-      P.sprintf "(%d, %d, %d, %d)" sid super#cid super#level len
-    ) else ""
+      Some([sid],super#cid,super#level,[n_vs])
+    ) else None
 
-  |_ -> ""
+  |_ -> None
 
-
-  method mk_instr (ast:file) (main_fd:fundec) (ssid:int) 
+  method mk_instr (ast:file) (main_fd:fundec) (sid:int) 
     (tpl_id:int) (idxs:int list) (xinfo:string) 
     :(instr -> varinfo list ref -> instr list ref -> instr) =
 
-    let vs:varinfo array = read_file_bin (arr_s ast.fileName ssid tpl_id) in
+    let vs:varinfo array = read_file_bin (arr_s ast.fileName sid tpl_id) in
     let vs:varinfo list = L.map (fun idx ->  vs.(idx) ) idxs in
     let n_vs = L.length vs in 
 
@@ -1408,49 +1455,53 @@ let spy
     (filename:string)
     (stmt_ht:(int,stmt*fundec) H.t)
     (sid:sid_t)
+    : spy_t list
     = 
    let s,fd = H.find stmt_ht sid in
     if !vdebug then E.log "Spy stmt %d in fun %s\n%a\n" sid fd.svar.vname dn_stmt s;
+   
+     match s.skind with 
+     |Instr ins ->
+       assert (L.length ins = 1);
+       let spy_f p c = 
+	 if p then c#spy_stmt filename sid fd (L.hd ins) else None
+       in
+       let rs = 
+	 if L.length !tpl_ids > 0 then
+	   L.map (fun cl -> spy_f (L.mem cl#cid !tpl_ids) cl) tpl_classes 
+	 else
+	   L.map(fun cl -> spy_f (cl#level <= !tpl_level) cl) tpl_classes
+       in 
+       list_of_some rs
 
-   match s.skind with 
-   |Instr ins ->
-     assert (L.length ins = 1);
-     let sinstr = L.hd ins in
-     if L.length !tpl_ids > 0 then
-       L.map (fun cl -> 
-      	 if not (L.mem cl#cid !tpl_ids) then "" else cl#spy_stmt filename sid fd sinstr
-       )tpl_classes 
-	 
-     else
-       L.map(fun cl -> 
-	 if cl#level > !tpl_level then "" else cl#spy_stmt filename sid fd sinstr
-       )tpl_classes
-	 
-   |_ -> ealert "no info obtained on stmt %d\n%a" sid dn_stmt s; []
+     |_ -> ealert "no info obtained on stmt %d\n%a" sid dn_stmt s; []
 
 
 (*runs in parallel*)
 let transform 
     (filename:string) 
-    (ssid:sid_t) 
+    (sids:sid_t list) 
     (tpl_id:int) 
     (xinfo:string) 
-    (idxs:int list)= 
+    (idxs:int list) = 
 
   let (ast:file),(mainQ_fd:fundec),(tcs:testcase_t list) =
     read_file_bin (ginfo_s filename) in
 
   let main_fd = find_fun ast "main" in 
+  let sid = L.hd sids in (*FIXME*)
+  let sids_s = string_of_ints ~delim:"_" sids in 
 
   (*modify stmt*)  
   let cl = L.find (fun cl -> cl#cid = tpl_id ) tpl_classes in 
   let mk_instr:(instr-> varinfo list ref -> instr list ref -> instr) = 
-    cl#mk_instr ast main_fd ssid tpl_id idxs xinfo in
-
-  let visitor = (new modStmtVisitor) ssid (fun i -> mk_instr i) in
+    cl#mk_instr ast main_fd sid tpl_id idxs xinfo in
+  
+  let visitor = (new modStmtVisitor) sids (fun i -> mk_instr i) in
   visitCilFileSameGlobals (visitor:> cilVisitor) ast;
   let stat, uks, instrs = visitor#status, visitor#uks, visitor#instrs in 
-  if stat = "" then E.s(E.error "stmt %d not modified" ssid);
+  if stat = "" then E.s(E.error "stmts [%s] not modified" sids_s);
+  
 
   (*modify main*)
   let main_stmts = mk_main main_fd mainQ_fd tcs uks instrs in
@@ -1463,7 +1514,7 @@ let transform
 
   (*add include "klee/klee.h" to file*)
   ast.globals <- (GText "#include \"klee/klee.h\"") :: ast.globals;
-  let fn = transform_s ast.fileName ssid xinfo in
+  let fn = transform_s ast.fileName sids_s xinfo in
 
   (*the symbol is useful when parsing the result, don't mess up this format*)
   E.log "Transform success: ## '%s' ##  %s\n" fn stat;
@@ -1498,15 +1549,15 @@ let () = begin
     "--no_global_vars", Arg.Set no_global_vars,
     P.sprintf " don't consider global variables when modify stmts (default %b)" !no_global_vars;
 
-    "--fl_ssids", Arg.String (fun s -> fl_ssids := L.map int_of_string (str_split s)), 
+    "--fl_sids", Arg.String (fun s -> fl_sids := L.map int_of_string (str_split s)), 
     (P.sprintf "%s" 
-       " don't run fault loc, use the given suspicious stmts, e.g., --fl_ssids \"1 3 7\".");
+       " don't run fault loc, use the given suspicious stmts, e.g., --fl_sids \"1 3 7\".");
 
     "--fl_alg", Arg.Set_int fl_alg,
     P.sprintf " use fault localization algorithm, 1 Ochia, 2 Tarantula (default %d)" !fl_alg;
    
-    "--top_n_ssids", Arg.Set_int top_n_ssids,
-    P.sprintf " consider this number of suspicious stmts (default %d)" !top_n_ssids;
+    "--top_n_sids", Arg.Set_int top_n_sids,
+    P.sprintf " consider this number of suspicious stmts (default %d)" !top_n_sids;
 
     "--min_sscore", Arg.Set_float min_sscore,
     P.sprintf " consider suspicious stmts with at least this score (default %g)" !min_sscore;
@@ -1521,17 +1572,23 @@ let () = begin
     P.sprintf " only do spy (default %b)" !only_spy;
 
     "--only_peek", Arg.Set only_peek, 
-    P.sprintf " only do peek the stmt given in --ssid (default %b)" !only_peek;
+    P.sprintf " only do peek the stmt given in --sid (default %b)" !only_peek;
 
-    (*Options for transforming file (act as a stand alone program)*)
+
+    (* STAND ALONE PROGRAM *)
+    (* transforming file*)
     "--only_transform", Arg.Set only_transform, 
     " stand alone prog to transform code, " ^ 
-      "e.g., --only_transform --ssid 1 --tpl 1 --idxs \"3 7 8\" --xinfo z2_c5";
+      "e.g., --only_transform --sid 1 --tpl 1 --idxs \"3 7 8\" --xinfo z2_c5";
 
-    "--ssid", Arg.Int (fun i -> 
-      if i < 0 then raise (Arg.Bad "arg --ssid must be > 0"); 
-      ssid:=i
-    ), "e.g., --ssid 1";
+    "--sids", Arg.String (fun s-> 
+      let sids' =  L.map int_of_string (str_split s) in
+      if L.exists (fun i -> i < 0) sids' then (
+	raise(Arg.Bad (P.sprintf 
+			 "arg --sids must contain non-neg ints, [%s]" 
+			 (string_of_ints sids'))));
+      sids := sids'), 
+    " e.g., --sids \"3 7 8\"";
 
     "--tpl", Arg.Int (fun i -> 
       if i < 0 then raise (Arg.Bad "arg --tpl must be > 0");
@@ -1543,11 +1600,11 @@ let () = begin
       let idxs' =  L.map int_of_string (str_split s) in
       if L.exists (fun i -> i < 0) idxs' then (
 	raise(Arg.Bad (P.sprintf 
-			 "arg --idxs must only contain non-neg ints, [%s]" 
+			 "arg --idxs must contain non-neg ints, [%s]" 
 			 (string_of_ints idxs'))));
-      idxs:=idxs'), 
-    " e.g., --idxs \"3 7 8\""
-
+      idxs := idxs'), 
+    " e.g., --idxs \"3 7 8\"";
+    
   ] in
 
 
@@ -1567,14 +1624,17 @@ let () = begin
   initCIL();
   Cil.lineDirectiveStyle:= None;
   Cprint.printLn:=false; (*don't print line #*)
-  Cil.useLogicalOperators := true; (*Must be set so that Cil doesn't && || *)
+
+  (* for Cil to retain &&, ||, ?: instead of transforming them to If stmts *)
+  Cil.useLogicalOperators := true; 
 
 
-  (*Stand alone program for transformation*)
+  (* Stand alone program for transformation *)
   if !only_transform then (
-    transform !filename !ssid !tpl !xinfo !idxs;
+    transform !filename !sids !tpl !xinfo !idxs;
     exit 0
   );
+
 
   (*** some initialization, getting testcases etc***)
   (*
@@ -1611,19 +1671,36 @@ let () = begin
   write_src (ast.fileName ^ ".preproc.c") ast;
 
   if !only_peek then (
-    ignore (visitCilFileSameGlobals ((new peekVisitor) !ssid) ast);
+    ignore (visitCilFileSameGlobals ((new peekVisitor) !sids) ast);
     exit 0);
 
 
-  (*** fault localization ***)
-  let ssids:sid_t list = 
-    if L.length !fl_ssids > 0 then !fl_ssids else (
-      let flVis = (new faultloc) ast tcObj#mygoods tcObj#mybads stmt_ht in
-      let ssids' = flVis#fl  in
-      take !top_n_ssids ssids')   (*only consider n top ones*)
-  in 
+  (* determine if file contains synthesis stmts*)
+  let syn_sids = find_synstmts ast in 
+  only_synthesis := L.length syn_sids > 0 ;
 
-  if L.length ssids = 0 then (ealert "No suspicious stmts !"; exit 0);
+  let perform_s = ref "" in 
+  let sids:sid_t list ref = ref [] in 
+  if !only_synthesis then (
+    perform_s := "Synthesis";
+    sids := syn_sids;
+    tpl_ids := [3] (*CONST template*)
+  )
+  else ( 
+    perform_s := "BugFix";
+    (*** fault localization ***)
+    let fl_sids:sid_t list = if L.length !fl_sids > 0 then !fl_sids else (
+      let flVis = (new faultloc) ast tcObj#mygoods tcObj#mybads stmt_ht in
+      let sids' = flVis#fl  in
+      take !top_n_sids sids')   (*consider only n top susp stmts*)
+    in
+    sids := fl_sids
+  );
+
+  ealert "Perform ** %s **" !perform_s;
+
+  let sids = !sids in
+  if L.length sids = 0 then (ealert "No suspicious stmts !"; exit 0);
 			      
   (*** transformation and bug fixing ***)
   (* find mainQ *)
@@ -1640,25 +1717,32 @@ let () = begin
 	(string_of_list (L.map (fun vi -> vi.vname) !extra_vars));
   );
 
- 
   (*spy on suspicious stmts*)
-  if !vdebug then E.log "Spy on %d ssids [%s]\n" 
-    (L.length ssids) (string_of_list (L.map string_of_int ssids));
+  if !vdebug then E.log "Spy %d sids: [%s] with tpl_ids: [%s]\n" 
+    (L.length sids) (string_of_ints sids) (string_of_ints !tpl_ids);
 
-  let rs = L.map (spy ast.fileName stmt_ht) ssids in
+  let rs = L.map (spy ast.fileName stmt_ht) sids in
   let rs' = L.filter (function |[] -> false |_ -> true) rs in
-  let rs = L.filter (fun c -> c <> "") (L.flatten rs') in
-  ealert "Spy: Got %d info from %d ssids" (L.length rs) (L.length rs');
-  
+  let rs = L.flatten rs' in 
+  ealert "Spy: Got %d info from %d sids" (L.length rs) (L.length rs');
   if (L.length rs) = 0 then (ealert "No spied info. Exit!"; exit 0);
-    
+
+  let rs = 
+    if !only_synthesis then 
+      group_sids sids rs (*synthesize multiple statements simultenously*)
+    else
+      rs
+  in
+  let rs = L.map string_of_spys rs in
+
   (*call Python script to do transformation*)
   let rs = String.concat "; " rs in
-  let kr_opts = [if !no_parallel then "--no_parallel" else "";
-  		 if !no_bugfix then  "--no_bugfix"  else "";
-  		 if !no_stop then "--no_stop" else "";
-  		 if !vdebug then "--debug" else "";
-  		] in
+  let kr_opts = [
+    if !vdebug then "--debug" else "";
+    if !no_parallel then "--no_parallel" else "";
+    if !no_bugfix then  "--no_bugfix"  else "";
+    if !no_stop then "--no_stop" else ""
+  ] in
   let kr_opts = String.concat " " (L.filter (fun o -> o <> "") kr_opts) in
 
   let cmd = P.sprintf "python %s %s --do_tb \"%s\" %s"
