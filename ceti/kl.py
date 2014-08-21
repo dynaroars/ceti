@@ -366,11 +366,6 @@ if __name__ == "__main__":
                          action="store_true",
                          help="don't stop after finding a fix")
 
-    aparser.add_argument("--only_synthesis",
-                         action="store_true",
-                         help='synthesize program '\
-                             '(find missing values simultaneously)')
-                         
     args = aparser.parse_args()
 
     vdebug = args.debug
