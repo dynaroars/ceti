@@ -147,10 +147,24 @@ let boolTyp:typ = intType
 type inp_t = int list 
 type outp_t = int 
 type testcase_t = inp_t*outp_t
+
+type inpT_t = string list  (*e.g., *)
+type outpT_t = string 
+type testcaseT_t = inpT_t*outpT_t
+
+
+type mTyp = string (*e.g., "int", "float"*)
+type mContent = string (*e.g., "2.5" *)
+type mVal = mTyp*mContent
+type minp_t = mVal list (* [("int","2"),("float","2.5")]*)
+type moutp_t = mVal
+type mtestcase_t = minp_t*moutp_t
+
+
 type sid_t = int
 type spy_t = sid_t list*int*int*int list (*sid,cid,level,idxs*)
 
-let string_of_spys ((sids,cid,level,idxs):spy_t) : string = 
+let string_of_spys ((sids,cid,level,idxs):spy_t): string = 
   let sid' = (String.concat " " (L.map string_of_int sids)) in
   let idxs' = (String.concat " " (L.map string_of_int idxs)) in
   P.sprintf "(%s, %d, %d, %s)" sid' cid level idxs'
@@ -501,7 +515,7 @@ end
 
 (********************** Initial Check **********************)
 
-let mk_testscript (testscript:string) (tcs:(int list * int) list) =
+let mk_testscript (testscript:string) (tcs:testcase_t list) =
   (*"($1 1071 1029 | diff ref/output.1071.1029 - && (echo "1071 1029" >> $2)) &"*)
 
   let content = L.map (fun (inp,_) ->
@@ -515,7 +529,23 @@ let mk_testscript (testscript:string) (tcs:(int list * int) list) =
   
   if!vdebug then E.log "Script %s\n%s\n" testscript content;
   write_file_str testscript content
-    
+
+
+let mk_testscriptS (testscript:string) (tcs:mtestcase_t list) =
+  (*"($1 1071 1029 | diff ref/output.1071.1029 - && (echo "1071 1029" >> $2)) &"*)
+
+  let content = L.map (fun (inp,_) ->
+    let inp:mContent list = snd (L.split inp) in
+    let inp = String.concat " " inp in
+
+    (*if use & then things are done in parallel but order mesed up*)
+    P.sprintf "($1 %s >> $2) ;" inp 
+  ) tcs in
+  let content = String.concat "\n" content in
+  let content = P.sprintf "#!/bin/bash\nulimit -t 1\n%s\nwait\nexit 0\n" content in
+  
+  if!vdebug then E.log "Script %s\n%s\n" testscript content;
+  write_file_str testscript content    
 
 let run_testscript (testscript:string) (prog:string) (prog_output:string) =
   (* "sh script.sh prog prog_output" *)
@@ -527,16 +557,22 @@ let run_testscript (testscript:string) (prog:string) (prog_output:string) =
   exec_cmd cmd
 
 
-let mk_run_testscript testscript prog prog_output tcs = 
+let mk_run_testscript testscript prog prog_output (tcs:testcase_t list) = 
 
   assert (not (Sys.file_exists testscript));
   mk_testscript testscript tcs;
+  run_testscript testscript prog prog_output
+
+let mk_run_testscriptS testscript prog prog_output (tcs:mtestcase_t list) = 
+
+  assert (not (Sys.file_exists testscript));
+  mk_testscriptS testscript tcs;
   run_testscript testscript prog prog_output
     
     
 (*********************** Testcases ***********************)
 
-let string_of_tc (tc:inp_t*outp_t) : string = 
+let string_of_tc (tc:testcase_t) : string = 
   let inp,outp = tc in 
   let inp = String.concat "; " (L.map string_of_int inp) in
   let outp = string_of_int outp in 
@@ -547,6 +583,17 @@ let string_of_tcs (tcs:testcase_t list) :string =
   let tcs = String.concat "; " tcs in
   "["^ tcs ^ "]"
 
+let string_of_tcT (tc:testcaseT_t) : string = 
+  let inp,outp = tc in 
+  let inp = String.concat "; " inp in
+  "([" ^ inp ^ "]" ^ ", " ^ outp ^ "]"
+
+let string_of_tcsT (tcs:testcaseT_t list) :string = 
+  let tcs = L.map string_of_tcT tcs in 
+  let tcs = String.concat "; " tcs in
+  "["^ tcs ^ "]"
+
+
 class uTest (filename:string) = object(self)
 
   val filename = filename
@@ -554,9 +601,18 @@ class uTest (filename:string) = object(self)
   val mutable mygoods = []
   val mutable mybads = []
 
+  val mutable mytcsS:mtestcase_t list = []
+  val mutable mygoodsS:mtestcase_t list = []
+  val mutable mybadsS:mtestcase_t list = []
+
   method mytcs   = mytcs
   method mygoods = mygoods
   method mybads  = mybads
+
+  method mytcsS   = mytcsS
+  method mygoodsS = mygoodsS
+  method mybadsS  = mybadsS
+
 
   (*read testcases *)
   method get_tcs (inputs:string) (outputs:string) = 
@@ -568,7 +624,7 @@ class uTest (filename:string) = object(self)
     let outputs = read_lines outputs in 
     assert (L.length inputs = L.length outputs);
     
-    let tcs = 
+    let tcs:testcase_t list = 
       L.fold_left2 (fun acc inp outp ->
 	let inp = str_split  inp in
 	(try
@@ -584,14 +640,40 @@ class uTest (filename:string) = object(self)
     in
     let tcs = L.rev tcs in
 
+    let tcsS:mtestcase_t list = 
+      L.fold_left2 (fun acc inp outp ->
+	let inp = str_split  inp in
+	(try
+	   let inp:minp_t = L.map (fun x -> (self#get_typ x, x)) inp in
+	   let outp:moutp_t = (self#get_typ outp, outp) in 
+	   (inp,outp)::acc
+	 with _ -> 
+	   E.error "Ignoring (%s, %s)" (String.concat ", " inp) outp;
+	   acc
+	)
+      ) [] inputs outputs 
+    in
+    let tcsS = L.rev tcsS in
+
+
     if L.length tcs = 0 then (ealert "No tcs !"; exit 1);
 
     if !vdebug then E.log "|tcs|=%d\n" (L.length tcs);
     (*E.log "%s\n" (string_of_tcs tcs);*)
 
     mytcs <- tcs;
+    mytcsS <- tcsS;
+
     self#get_goodbad_tcs 
 
+  method private get_typ s: mTyp = 
+    try
+      ignore(int_of_string s);
+      "int"
+    with _ ->
+      ignore(float_of_string s);
+      "double"
+	
   method private get_goodbad_tcs = 
     E.log "*** Get good/bad tcs ***\n";
     
@@ -612,9 +694,29 @@ class uTest (filename:string) = object(self)
     mygoods <- goods;
     mybads <- bads
 
+  method private get_goodbad_tcsS = 
+    E.log "*** Get good/bad tcs ***\n";
+    
+    (*compile and run program on tcs*)
+    let prog:string = compile filename in
+    
+    let testscript =  filename ^ ".sh" in
+    let prog_output:string = filename ^ ".routputs" in
+    mk_run_testscriptS testscript prog prog_output mytcsS;
+    
+    (*check if prog passes all inputs:
+      If yes then exit. If no then there's bug to fix*)
+    let goods,bads = self#compare_outputsS prog_output mytcsS in 
+    let nbads = L.length bads in
+    if nbads = 0 then (ealert "All tests passed. No bug found. Exit!"; exit 0)
+    else (ealert "%d/%d tests failed. Bug found. Processing .." nbads (L.length mytcsS));
+    
+    mygoodsS <- goods;
+    mybadsS <- bads
+
   (*partition tcs into 2 sets: good / bad*)
   method private compare_outputs 
-    (prog_outputs:string) (tcs:testcase_t list) : testcase_t list * testcase_t list = 
+    (prog_outputs:string) (tcs:testcase_t list): testcase_t list * testcase_t list = 
 
   let prog_outputs = read_lines prog_outputs in 
   assert (L.length prog_outputs == L.length tcs) ;
@@ -629,6 +731,23 @@ class uTest (filename:string) = object(self)
 
   goods, bads
 
+  method private compare_outputsS
+    (prog_outputs:string) (tcs:mtestcase_t list): mtestcase_t list * mtestcase_t list =
+
+  let prog_outputs = read_lines prog_outputs in
+  let prog_outputs = L.map (fun x -> (self#get_typ x, x)) prog_outputs in 
+  assert (L.length prog_outputs == L.length tcs) ;
+
+  let goods, bads = L.partition (fun ((_,e_outp),p_outp) ->
+    (try e_outp = p_outp
+     with _ -> false)
+  ) (L.combine tcs prog_outputs) in
+
+  let goods,_ = L.split goods in
+  let bads,_ =  L.split bads in
+
+  goods, bads
+    
 end
 
 (******************* Fault Localization *******************)
@@ -853,6 +972,189 @@ object(self)
       bad /. sqrt(tbad *. (bad +. good))
     
 end
+
+
+
+class faultlocS 
+  (ast:file) 
+  (goodsS:mtestcase_t list) 
+  (badsS:mtestcase_t list) 
+  (stmt_ht:(sid_t,stmt*fundec) H.t) = 
+object(self)
+
+  val ast = ast
+  val goods = goodsS
+  val bads = badsS
+  val stmt_ht = stmt_ht
+
+  method fl : sid_t list = 
+    E.log "*** Fault Localization ***\n";
+
+    assert (L.length bads > 0) ;
+    let sscores:sscore list = 
+      if L.length goods = 0 then 
+	H.fold (fun sid _ rs -> (sid,!min_sscore)::rs) stmt_ht [] 
+      else
+	let ast_bn =  
+	  let tdir = Filename.dirname ast.fileName in
+	  let tdir = mkdir_tmp ~temp_dir:tdir "fautloc" "" in
+	  P.sprintf "%s/%s" tdir (Filename.basename ast.fileName) 
+	in
+	
+	(*create cov file*)
+	let fileName_cov = ast_bn ^ ".cov.c"  in
+	let fileName_path = ast_bn ^ ".path"  in
+	self#coverage (copy_obj ast) fileName_cov fileName_path;
+	
+	(*compile cov file*)
+	let prog:string = compile fileName_cov in
+	
+	(*run prog to obtain good/bad paths*)
+	let path_generic = ast_bn ^ ".path" in
+	let path_g = ast_bn ^ ".gpath" in
+	let path_b = ast_bn ^ ".bpath" in
+	
+	(*good path*)
+	mk_run_testscriptS (ast_bn ^ ".g.sh") prog 
+	  (ast_bn ^ ".outputs_g_dontcare") goods;
+	Unix.rename path_generic path_g;
+	
+	(*bad path*)
+	mk_run_testscriptS (ast_bn ^ ".b.sh") prog 
+	  (ast_bn ^ ".outputs_bad_dontcare") bads;
+	Unix.rename path_generic path_b;
+	
+	let n_g, ht_g = self#analyze_path path_g in
+	let n_b, ht_b = self#analyze_path path_b in
+	self#compute_sscores n_g ht_g n_b ht_b
+    in
+
+    (*remove all susp stmts in main, which cannot have anything except call
+      to mainQ, everything in main will be deleted when instrumenting main*)
+    let idx = ref 0 in 
+    let sscores = L.filter (fun (sid,score) -> 
+      let s,f = H.find stmt_ht sid in
+      if score >= !min_sscore && f.svar.vname <> "main" then(
+	E.log "%d. sid %d in fun '%s' (score %g)\n%a\n"
+	  !idx sid f.svar.vname score dn_stmt s;
+	incr idx;
+	true
+      ) else false
+    ) sscores in
+
+    ealert "FL: found %d stmts with sscores >= %g" 
+      (L.length sscores) !min_sscore;
+    
+    L.map fst sscores
+
+      
+  method private coverage (ast:file) (filename_cov:string) (filename_path:string) = 
+
+  (*add printf stmts*)
+  visitCilFileSameGlobals (new coverageVisitor) ast;
+
+  (*add to global
+    _coverage_fout = fopen("file.c.path", "ab");
+  *)
+  let new_global = GVarDecl(stderr_vi, !currentLoc) in
+  ast.globals <- new_global :: ast.globals;
+
+  let lhs = var(stderr_vi) in
+  let arg1 = Const(CStr(filename_path)) in
+  let arg2 = Const(CStr("ab")) in
+  let instr = mk_call ~av:(Some lhs) "fopen" [arg1; arg2] in
+  let new_s = mkStmt (Instr[instr]) in 
+
+  let fd = getGlobInit ast in
+  fd.sbody.bstmts <- new_s :: fd.sbody.bstmts;
+  
+  write_src filename_cov  ast
+
+  (* Analyze execution path *)    
+  method private analyze_path (filename:string): int * (int,int) H.t= 
+
+    if !vdebug then E.log "** Analyze exe path '%s'\n" filename;
+
+    let tc_ctr = ref 0 in
+    let ht_stat = H.create 1024 in 
+    let mem = H.create 1024 in 
+    let lines = read_lines filename in 
+    L.iter(fun line -> 
+      let sid = int_of_string line in 
+      if sid = 0 then (
+	incr tc_ctr;
+	H.clear mem;
+      )
+      else (
+	let sid_tc = (sid, !tc_ctr) in
+	if not (H.mem mem sid_tc) then (
+	  H.add mem sid_tc ();
+	  
+	  let n_occurs = 
+	    if not (H.mem ht_stat sid) then 1
+	    else succ (H.find ht_stat sid)
+	      
+	  in H.replace ht_stat sid n_occurs
+	)
+      )
+    )lines;
+    !tc_ctr, ht_stat
+
+
+  method private compute_sscores 
+    (n_g:int) (ht_g:(int,int) H.t) 
+    (n_b:int) (ht_b:(int,int) H.t) : sscore list =
+
+    assert(n_g <> 0);
+    assert(n_b <> 0);
+    
+    let alg = if !fl_alg = 1 
+      then self#alg_ochiai else self#alg_tarantula in
+
+    let ht_sids = H.create 1024 in 
+    let set_sids ht =
+      H.iter (fun sid _ ->
+	if not (H.mem ht_sids sid) then H.add ht_sids sid ()
+      ) ht;
+    in
+    set_sids ht_g ;
+    set_sids ht_b ;
+
+    let n_g = float_of_int n_g in
+    let n_b = float_of_int n_b in
+
+    let rs = H.fold (fun sid _ rs ->
+      let get_n_occur sid (ht: (int,int) H.t) : float=
+	if H.mem ht sid then float_of_int(H.find ht sid) else 0. 
+      in
+      let good = get_n_occur sid ht_g in
+      let bad = get_n_occur sid ht_b in
+      let score =  alg bad n_b good n_g in
+      
+      (sid,score)::rs
+
+    ) ht_sids [] in 
+
+    let rs = L.sort (fun (_,score1) (_,score2) -> compare score2 score1) rs in
+    rs
+
+
+  (*
+    Tarantula (Jones & Harrold '05)
+    score(s) = (bad(s)/total_bad) / (bad(s)/total_bad + good(s)/total_good)
+    
+    Ochiai (Abreu et. al '07)
+    score(s) = bad(s)/sqrt(total_bad*(bad(s)+good(s)))
+  *)
+
+  method private alg_tarantula bad tbad good tgood =
+      (bad /. tbad) /. ((good /. tgood) +. (bad /. tbad))
+
+  method private alg_ochiai bad tbad good tgood = 
+      bad /. sqrt(tbad *. (bad +. good))
+    
+end
+
 (******************* For debugging a Cil construct *******************)
 
 let rec peek_exp e: string = 
@@ -979,7 +1281,7 @@ let mk_main (main_fd:fundec) (mainQ_fd:fundec) (tcs:testcase_t list)
     
     (*mk tmp == outp*)
     (*todo: should convert outp according to mainQ type*)
-    let e:exp = BinOp(Eq,Lval temp,integer outp, boolTyp) in 
+    let e:exp = BinOp(Eq,Lval temp, integer outp, boolTyp) in 
     i,e
   ) tcs in
 
@@ -1005,6 +1307,54 @@ let mk_main (main_fd:fundec) (mainQ_fd:fundec) (tcs:testcase_t list)
   
   let instrs_skind:stmtkind = Instr(instrs1@instrs2) in
   [mkStmt instrs_skind; mkStmt if_skind]
+
+
+(* let mk_mainS (main_fd:fundec) (mainQ_fd:fundec) (tcs:mtestcase_t list)  *)
+(*     (uks:varinfo list) (instrs1:instr list) :stmt list=  *)
+  
+(*   let rs = L.map (fun ((inps:inpT_t), outp) ->  *)
+(*     let mainQ_typ:typ = match mainQ_fd.svar.vtype with  *)
+(*       |TFun(t,_,_,_) -> t *)
+(*       |_ -> E.s(E.error "%s is not fun typ %a\n"  *)
+(* 		  mainQ_fd.svar.vname d_type mainQ_fd.svar.vtype) *)
+(*     in *)
+  
+(*     (\*mainQ_typ temp;*\) *)
+(*     let temp:lval = var(makeTempVar main_fd mainQ_typ) in  *)
+  
+(*     (\*tmp = mainQ(inp, uks);*\) *)
+(*     (\*TODO: should be the types of mainQ inps , not integer*\) *)
+(*     let args = L.map (fun x -> integer (int_of_string x)) inps in  *)
+(*     let i:instr = mk_call ~ftype:mainQ_typ ~av:(Some temp) "mainQ" args in *)
+    
+(*     (\*mk tmp == outp*\) *)
+(*     (\*TODO: should convert outp according to mainQ type*\) *)
+(*     let e:exp = BinOp(Eq,Lval temp, integer (int_of_string outp), boolTyp) in  *)
+(*     i,e *)
+(*   ) tcs in *)
+
+(*   let instrs2, exps = L.split rs in  *)
+
+(*   (\*creates reachability "goal" stmt  *)
+(*     if(e_1,..,e_n){printf("GOAL: uk0 %d, uk1 %d ..\n",uk0,uk1);klee_assert(0);} *)
+(*   *\) *)
+(*   let s = L.map (fun vi -> vi.vname ^ " %d") uks in *)
+(*   let s = "GOAL: " ^ (String.concat ", " s) ^ "\n" in  *)
+(*   let print_goal:instr = mk_call "printf"  *)
+(*     (Const(CStr(s))::(L.map exp_of_vi uks)) in  *)
+  
+(*   (\*klee_assert(0);*\) *)
+(*   let klee_assert_zero:instr = mk_call "klee_assert" [zero] in  *)
+  
+(*   let and_exps = apply_binop LAnd exps in *)
+(*   let if_skind = If(and_exps,  *)
+(* 		    mkBlock [mkStmt (Instr([print_goal; klee_assert_zero]))],  *)
+(* 		    mkBlock [],  *)
+(* 		    !currentLoc)  *)
+(*   in *)
+  
+(*   let instrs_skind:stmtkind = Instr(instrs1@instrs2) in *)
+(*   [mkStmt instrs_skind; mkStmt if_skind] *)
 
 (* modify statements *)
 class modStmtVisitor 
@@ -1521,6 +1871,49 @@ let transform
   write_src fn ast
 
 
+(* let transformS  *)
+(*     (filename:string)  *)
+(*     (sids:sid_t list)  *)
+(*     (tpl_id:int)  *)
+(*     (xinfo:string)  *)
+(*     (idxs:int list) =  *)
+
+(*   let (ast:file),(mainQ_fd:fundec),(tcs:mtestcase_t list) = *)
+(*     read_file_bin (ginfo_s filename) in *)
+
+(*   let main_fd = find_fun ast "main" in  *)
+(*   let sid = L.hd sids in (\*FIXME*\) *)
+(*   let sids_s = string_of_ints ~delim:"_" sids in  *)
+
+(*   (\*modify stmt*\)   *)
+(*   let cl = L.find (fun cl -> cl#cid = tpl_id ) tpl_classes in  *)
+(*   let mk_instr:(instr-> varinfo list ref -> instr list ref -> instr) =  *)
+(*     cl#mk_instr ast main_fd sid tpl_id idxs xinfo in *)
+  
+(*   let visitor = (new modStmtVisitor) sids (fun i -> mk_instr i) in *)
+(*   visitCilFileSameGlobals (visitor:> cilVisitor) ast; *)
+(*   let stat, uks, instrs = visitor#status, visitor#uks, visitor#instrs in  *)
+(*   if stat = "" then E.s(E.error "stmts [%s] not modified" sids_s); *)
+  
+
+(*   (\*modify main*\) *)
+(*   let main_stmts = mk_mainS main_fd mainQ_fd tcs uks instrs in *)
+(*   main_fd.sbody.bstmts <- main_stmts; *)
+
+(*   (\*add uk's to fun decls and fun calls*\) *)
+(*   let fiv = (new funInstrVisitor) uks in *)
+(*   visitCilFileSameGlobals (fiv :> cilVisitor) ast; *)
+(*   visitCilFileSameGlobals ((new instrCallVisitor) uks fiv#ht) ast; *)
+
+(*   (\*add include "klee/klee.h" to file*\) *)
+(*   ast.globals <- (GText "#include \"klee/klee.h\"") :: ast.globals; *)
+(*   let fn = transform_s ast.fileName sids_s xinfo in *)
+
+(*   (\*the symbol is useful when parsing the result, don't mess up this format*\) *)
+(*   E.log "Transform success: ## '%s' ##  %s\n" fn stat; *)
+(*   write_src fn ast *)
+
+
 (********************** Prototype **********************)
 
 let () = begin
@@ -1689,11 +2082,19 @@ let () = begin
   else ( 
     perform_s := "BugFix";
     (*** fault localization ***)
+
+    (* let fl_sidsT:sid_t list = if L.length !fl_sids > 0 then !fl_sids else ( *)
+    (*   let flVis = (new faultlocS) ast tcObj#mygoodsT tcObj#mybadsT stmt_ht in *)
+    (*   let sids' = flVis#fl  in *)
+    (*   take !top_n_sids sids')   (\*consider only n top susp stmts*\) *)
+    (* in *)
+
     let fl_sids:sid_t list = if L.length !fl_sids > 0 then !fl_sids else (
       let flVis = (new faultloc) ast tcObj#mygoods tcObj#mybads stmt_ht in
       let sids' = flVis#fl  in
       take !top_n_sids sids')   (*consider only n top susp stmts*)
     in
+
     sids := fl_sids
   );
 
