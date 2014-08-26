@@ -1022,7 +1022,10 @@ let mk_main (main_fd:fundec) (mainQ_fd:fundec) (tcs:testcase_t list)
   (*creates reachability "goal" stmt 
     if(e_1,..,e_n){printf("GOAL: uk0 %d, uk1 %d ..\n",uk0,uk1);klee_assert(0);}
   *)
-  let s = L.map (fun vi -> vi.vname ^ " %d") uks in
+  let s = L.map (
+    fun vi -> vi.vname ^ 
+    (if vi.vtype == intType then " %d" else " %g")
+  ) uks in
   let s = "GOAL: " ^ (String.concat ", " s) ^ "\n" in 
   let print_goal:instr = mk_call "printf" 
     (Const(CStr(s))::(L.map exp_of_vi uks)) in 
