@@ -1,3 +1,4 @@
+//not able to fix, bugs at 2 locs
 int buggyQ(int inhibit, int up_sep, int down_sep){
   int bias;
   if(inhibit) {

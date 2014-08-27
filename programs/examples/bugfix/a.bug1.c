@@ -1,5 +1,5 @@
 int buggyQ(int x, int y){
-  return x + y <= 100; //bug
+  return x + y <= 100; //bug  =
 }
 int mainQ(int x, int y){
   return buggyQ(x, y);

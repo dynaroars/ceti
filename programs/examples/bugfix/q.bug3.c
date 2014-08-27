@@ -1,3 +1,4 @@
+//cannot fix this because of mix type && and <
 int buggyQ(int x, int y, int z){
   return (x && y < z);
 }
