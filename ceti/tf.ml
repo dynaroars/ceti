@@ -643,7 +643,7 @@ class uTest (filename:string) = object(self)
     (prog_outputs:string) (tcs:testcase_t list): testcase_t list * testcase_t list = 
 
   let prog_outputs = read_lines prog_outputs in 
-  assert (L.length prog_outputs == L.length tcs) ;
+  assert (L.length prog_outputs = L.length tcs) ;
 
   let goods, bads = L.partition (fun ((_,e_outp),p_outp) -> 
     (try e_outp = p_outp 
@@ -1023,8 +1023,7 @@ let mk_main (main_fd:fundec) (mainQ_fd:fundec) (tcs:testcase_t list)
     if(e_1,..,e_n){printf("GOAL: uk0 %d, uk1 %d ..\n",uk0,uk1);klee_assert(0);}
   *)
   let s = L.map (
-    fun vi -> vi.vname ^ 
-    (if vi.vtype == intType then " %d" else " %g")
+    fun vi -> vi.vname ^ (if vi.vtype = intType then " %d" else " %g")
   ) uks in
   let s = "GOAL: " ^ (String.concat ", " s) ^ "\n" in 
   let print_goal:instr = mk_call "printf" 
