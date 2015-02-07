@@ -4,60 +4,18 @@ for i in {1..41}; do cilly bug$i.c --save-temps --noPrintLn --useLogicalOperator
 *)
 
 open Cil
+open Vu_common
 module E = Errormsg
 module L = List
 module A = Array
 module H = Hashtbl 
 module P = Printf
+module CM = Vu_common
 
-let strip s =
-  let is_space = function
-    | ' ' | '\012' | '\n' | '\r' | '\t' -> true
-    | _ -> false in
-  let len = String.length s in
-  let i = ref 0 in
-  while !i < len && is_space (String.get s !i) do
-    incr i
-  done;
-  let j = ref (len - 1) in
-  while !j >= !i && is_space (String.get s !j) do
-    decr j
-  done;
-  if !i = 0 && !j = len - 1 then
-    s
-  else if !j >= !i then
-    String.sub s !i (!j - !i + 1)
-  else
-    ""
-
-(*check if s1 is a substring of s2*)
-let in_str s1 s2 = 
-  try ignore (Str.search_forward (Str.regexp_string s1) s2 0); true
-  with Not_found -> false
-
-let str_split s:string list =  Str.split (Str.regexp "[ \t]+")  s
 
 (* let forceOption (ao : 'a option) : 'a = *)
 (*   match ao with  | Some a -> a | None -> raise(Failure "forceOption") *)
 
-let write_file_str (filename:string) (content:string): unit = 
-  let fout = open_out filename in
-  P.fprintf fout "%s" content; 
-  close_out fout;
-  E.log "write_file_str: '%s'\n" filename
-
-let write_file_bin (filename:string) content: unit = 
-  let fout = open_out_bin filename in
-  Marshal.to_channel fout content [];
-  close_out fout;
-  E.log "write_file_bin: '%s'\n" filename
-
-let read_file_bin (filename:string) =
-  let fin = open_in_bin filename in
-  let content = Marshal.from_channel fin in
-  close_in fin;
-  E.log "read_file: '%s'\n" filename;
-  content
 
 let write_src ?(use_stdout:bool=false) (filename:string) (ast:file): unit = 
   let df oc =  dumpFile defaultCilPrinter oc filename ast in
@@ -65,58 +23,9 @@ let write_src ?(use_stdout:bool=false) (filename:string) (ast:file): unit =
     let fout = open_out filename in
     df fout;
     close_out fout;
-    E.log "write_src: '%s'\n" filename
+    P.printf "write_src: '%s'\n%!" filename
   )
 
-let rec take n = function 
-  |[] -> [] 
-  |h::t -> if n = 0 then [] else h::take (n-1) t
-
-(* let rec drop n = function *)
-(*   | [] -> [] *)
-(*   | h::t as l -> if n = 0 then l else drop (n-1)  *)
-
-let rec range ?(a=0) b = if a >= b then [] else a::range ~a:(succ a) b 
-
-(*[Some 1, None, Some 2] -> [1,2]*)
-let list_of_some (l:'a option list):'a list = 
-  let rs = 
-    L.fold_left (fun l' -> function |Some f -> f::l' |None -> l') [] l
-  in L.rev rs
-
-  
-let copy_obj (x : 'a) = 
-  let s = Marshal.to_string x [] in (Marshal.from_string s 0 : 'a)
-
-(*create a temp dir*)
-let mkdir_tmp ?(use_time=false) ?(temp_dir="") dprefix dsuffix = 
-  let dprefix = if use_time 
-    then P.sprintf "%s_%d" dprefix (int_of_float (Unix.time())) 
-    else dprefix 
-  in 
-  let dprefix = dprefix ^ "_" in 
-
-  let td = 
-    if temp_dir = "" then Filename.temp_file dprefix dsuffix 
-    else Filename.temp_file ~temp_dir:temp_dir dprefix dsuffix
-  in
-      
-  Unix.unlink td;
-  Unix.mkdir td 0o755;
-  td
-    
-let exec_cmd cmd = 
-  E.log "$ %s\n" cmd ;
-  match Unix.system cmd with
-    |Unix.WEXITED(0) -> ()
-    |_ -> E.s(E.error "cmd failed '%s'" cmd)
-
-let chk_exist ?(msg="") (filename:string) : unit =
-  if not (Sys.file_exists filename) then (
-    if msg <> "" then E.log "%s\n" msg;
-    E.s(E.error "file '%s' not exist" filename)
-  )
-  
 let econtextMessage name d = 
   if name = "" then 
     ignore (Pretty.fprintf !E.logChannel  "%a@!" Pretty.insert d)
@@ -256,10 +165,6 @@ let string_of_stmt (s:stmt) = Pretty.sprint ~width:80 (dn_stmt () s)
 let string_of_exp (s:exp) = Pretty.sprint ~width:80 (dn_exp () s) 
 let string_of_instr (s:instr) = Pretty.sprint ~width:80 (dn_instr () s) 
 let string_of_lv (s:lval) = Pretty.sprint ~width:80 (dn_lval () s) 
-let string_of_list ?(delim:string = ", ") =  String.concat delim
-let string_of_ints ?(delim:string = ", ") (l:int list): string = 
-  string_of_list ~delim (L.map string_of_int l)
-
 
 let exp_of_vi (vi:varinfo): exp = Lval (var vi)
 (*"3" Int -> 3,  "3.2" Float -> 3.2*)
@@ -303,20 +208,6 @@ let compile (src:string): string =
   exe
 
 
-(*returns a list of lines from an ascii file*)
-let read_lines (filename:string) :string list =
-  let lines:string list ref = ref [] in
-  (try
-    let fin = open_in filename in
-    (try
-       while true do 
-	 let line = strip (input_line fin) in 
-	 lines := line::!lines
-       done
-     with _ -> close_in fin)
-   with _ -> ());
-  L.rev !lines
-
 (*apply binary op to a list of exps, e.g, + [v1,..,vn] =>  v1 + .. + vn*)
 let apply_binop (op:binop) (exps:exp list): exp = 
   assert (L.length exps > 0);
@@ -338,7 +229,10 @@ let apply_bops
   assert (L.length uks > 0);
   assert (L.length uks = L.length ops);
   let ty = typeOf e1 in
-  assert (L.for_all (fun x -> typeOf x = ty) (e2::uks));
+  (*E.log "ty of %s is %s\n" (string_of_exp e1) (string_of_typ ty);*)
+  assert (L.for_all (fun x -> 
+    (*E.log "ty of %s is %s" (string_of_exp x) (string_of_typ (typeOf x));*)
+    typeOf x = ty) (e2::uks));
 
   let uk0, uks = L.hd uks, L.tl uks in
   let op0, ops = L.hd ops, L.tl ops in 
@@ -1598,7 +1492,7 @@ let transform
   write_src fn ast
 
 
-(********************** Prototype **********************)
+(********************** PROTOTYPE **********************)
 
 let () = begin
   E.colorFlag := true;
@@ -1627,17 +1521,20 @@ let () = begin
     P.sprintf " don't consider global variables when modify stmts (default %b)" 
       !no_global_vars;
 
-    "--fl_sids", Arg.String (fun s -> fl_sids := L.map int_of_string (str_split s)), 
+    "--fl_sids", Arg.String (fun s -> 
+      fl_sids := L.map int_of_string (CM.str_split s)),
     (P.sprintf "%s" 
        " don't run fault loc, use the given suspicious stmts, " ^
        "e.g., --fl_sids \"1 3 7\".");
 
     "--fl_alg", Arg.Set_int fl_alg,
-    P.sprintf " use fault localization algorithm, 1 Ochia, 2 Tarantula (default %d)" !fl_alg;
+    P.sprintf 
+      " use fault loc algorithm: 1 Ochia, 2 Tarantula (default %d)" 
+      !fl_alg;
       
    
     "--top_n_sids", Arg.Set_int top_n_sids,
-    P.sprintf " consider this number of suspicious stmts (default %d)" 
+    P.sprintf " consider this # of suspicious stmts (default %d)" 
       !top_n_sids;
 
     "--min_sscore", Arg.Set_float min_sscore,
