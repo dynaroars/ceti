@@ -1,5 +1,7 @@
 OCAML_OPTIONS = \
--I /usr/local/lib/ocaml/3.11.2/cil/
+-I /usr/local/lib/ocaml/3.12.1/cil/\
+-I /home/tnguyen/Dropbox/git/common_python/
+
 
 
 OCAMLC =    ocamlfind  ocamlc   $(OCAML_OPTIONS)
@@ -32,7 +34,7 @@ TF_MODULES = \
 	tf.cmo \
 
 tf: $(TF_MODULES:.cmo=.cmx) 
-	$(OCAMLOPT) -o $@ unix.cmxa str.cmxa nums.cmxa cil.cmxa  $^
+	$(OCAMLOPT) -o $@ unix.cmxa str.cmxa nums.cmxa cil.cmxa vu_common.cmx $^
 
 
 # dependencies

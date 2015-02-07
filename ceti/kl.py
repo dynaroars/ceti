@@ -115,12 +115,13 @@ def worker_transform(wid, src, sids, tpl, xinfo, idxs):
     proc = sp.Popen(cmd,shell=True,stdin=sp.PIPE,stdout=sp.PIPE,stderr=sp.PIPE)
     rs,rs_err = proc.communicate()
 
-    assert not rs, rs
+    #assert not rs, rs
 
     if vdebug: print rs_err[:-1] if rs_err.endswith("\n") else rs_err
 
     if "error" in rs_err or "success" not in rs_err:
         print "worker {}: transform failed '{}' !".format(wid, cmd)
+        print rs_err
         raise AssertionError
 
 

@@ -27,7 +27,7 @@ $ cd ceti
 $ source klee_export.sh  #setup environments for llvm-gcc and klee
 $ make  #compile the program
 # execute on an example
-$ ./tf ../programs/examples/a.bug1.c ../programs/examples/a.inputs ../programs/examples/a.outputs
+$ ./tf ../programs/examples/bugfix/a.bug1.c ../programs/examples/bugfix/a.inputs ../programs/examples/bugfix/a.outputs
 
 
 
