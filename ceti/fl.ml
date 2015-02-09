@@ -1,9 +1,11 @@
 (*Fault Localization*)
+
 open Cil
 open Vu_common
 open Ceti_common
 module E = Errormsg
 module H = Hashtbl
+module P = Printf
 
 type inp_t = string list  (*e.g., *)
 type outp_t = string 
@@ -11,12 +13,12 @@ type testcase_t = inp_t*outp_t
 
 let string_of_tc (tc:testcase_t) : string = 
   let inp,outp = tc in 
-  let inp = String.concat "; " inp in
+  let inp = string_of_list ~delim:"; " inp in
   "([" ^ inp ^ "]" ^ ", " ^ outp ^ "]"
 
 let string_of_tcs (tcs:testcase_t list) :string = 
   let tcs = L.map string_of_tc tcs in 
-  let tcs = String.concat "; " tcs in
+  let tcs = string_of_list ~delim:"; " tcs in
   "["^ tcs ^ "]"
 
 
@@ -24,15 +26,16 @@ let mk_testscript (testscript:string) (tcs:testcase_t list) =
   (*"($1 1071 1029 | diff ref/output.1071.1029 - && (echo "1071 1029" >> $2)) &"*)
 
   let content = L.map (fun (inp,_) ->
-    let inp = String.concat " " inp in
+    let inp = string_of_list ~delim:" " inp in
 
     (*if use & then things are done in parallel but order mesed up*)
     P.sprintf "($1 %s >> $2) ;" inp 
   ) tcs in
-  let content = String.concat "\n" content in
-  let content = P.sprintf "#!/bin/bash\nulimit -t 1\n%s\nwait\nexit 0\n" content in
-  
-  if!vdebug then E.log "Script %s\n%s\n" testscript content;
+  let content = string_of_list ~delim:"\n" content in
+  let content = 
+    P.sprintf "#!/bin/bash\nulimit -t 1\n%s\nwait\nexit 0\n" content in
+      
+  if!vdebug then P.printf "Script '%s'\n%s\n%!" testscript content;
   write_file_str testscript content
     
 
@@ -81,7 +84,7 @@ class uTest (filename:string) = object(self)
 	let inp = str_split  inp in
 	(try (inp,outp)::acc
 	 with _ -> 
-	   E.error "Ignore (%s, %s)" (String.concat ", " inp) outp;
+	   E.error "Ignore (%s, %s)" (string_of_list inp) outp;
 	   acc
 	)
       ) [] inputs outputs 
@@ -90,7 +93,7 @@ class uTest (filename:string) = object(self)
 
     if L.length tcs = 0 then (ealert "No tcs !"; exit 1);
 
-    if !vdebug then E.log "|tcs|=%d\n" (L.length tcs);
+    if !vdebug then P.printf "|tcs|=%d\n%!" (L.length tcs);
     (*E.log "%s\n" (string_of_tcs tcs);*)
 
     mytcs <- tcs;
@@ -98,7 +101,7 @@ class uTest (filename:string) = object(self)
 
 
   method private get_goodbad_tcs = 
-    E.log "*** Get good/bad tcs ***\n";
+    P.printf "*** Get good/bad tcs ***\n%!";
     
     (*compile and run program on tcs*)
     let prog:string = compile filename in
@@ -119,23 +122,27 @@ class uTest (filename:string) = object(self)
 
 
   method private compare_outputs 
+    (*
+      Returns good and bad inputs.
+      Good/bad inputs are when expected outputs eq/neq program outputs,
+    *)
     (prog_outputs:string) (tcs:testcase_t list): testcase_t list * testcase_t list = 
 
-  let prog_outputs = read_lines prog_outputs in 
-  assert (L.length prog_outputs = L.length tcs) ;
-
-  let goods, bads = L.partition (fun ((_,e_outp),p_outp) -> 
-    (try e_outp = p_outp 
-     with _ -> false)
-  ) (L.combine tcs prog_outputs) in
-
-  let goods,_ = L.split goods in
-  let bads,_ =  L.split bads in
-
-  goods, bads
+    let prog_outputs = read_lines prog_outputs in 
+    assert (L.length prog_outputs = L.length tcs) ;
+    
+    let goods, bads = L.partition (
+      fun ((_,e_outp),p_outp) -> 
+	(try e_outp = p_outp 
+	 with _ -> false)
+    ) (L.combine tcs prog_outputs) in
+    
+    let goods,_ = L.split goods in
+    let bads,_ =  L.split bads in
+    
+    goods, bads
 
 end
-
 
 
 (******************* Fault Localization *******************)
@@ -204,7 +211,7 @@ object(self)
 	let ast_bn =  
 	  let tdir = Filename.dirname ast.fileName in
 	  let tdir = mkdir_tmp ~temp_dir:tdir "faultloc" "" in
-	  P.sprintf "%s/%s" tdir (Filename.basename ast.fileName) 
+	  Filename.concat tdir (Filename.basename ast.fileName) 
 	in
 	
 	(*create cov file*)
@@ -362,5 +369,10 @@ object(self)
       bad /. sqrt(tbad *. (bad +. good))
     
 end
+
+
+let fl_alg = ref 1 (*1: ochiai, ow: tarantula*)
+let min_sscore:float ref = ref 0.5
+let top_n_sids:int ref = ref 10
 
 

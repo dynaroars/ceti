@@ -9,7 +9,7 @@ OCAMLOPT =  ocamlfind ocamlopt $(OCAML_OPTIONS)
 OCAMLDEP =  ocamldep $(OCAML_OPTIONS)
 OCAMLLEX =  ocamllex 
 
-all: ceti_common fl tf
+all: ceti_common fl fl_test tf
 
 # %.cmo: %.ml 
 # 	@if [ -f $*.mli -a ! -f $*.cmi ] ; then $(OCAMLC) -c -g $*.mli ; fi 
@@ -43,6 +43,15 @@ FL_MODULES = \
 
 fl: $(FL_MODULES:.cmo=.cmx) 
 	$(OCAMLOPT) -o $@ unix.cmxa str.cmxa nums.cmxa cil.cmxa vu_common.cmx $^
+
+FL_TEST_MODULES = \
+	ceti_common.cmo\
+	fl.cmo \
+	fl_test.cmo
+
+fl_test: $(FL_TEST_MODULES:.cmo=.cmx) 
+	$(OCAMLOPT) -o $@ unix.cmxa str.cmxa nums.cmxa cil.cmxa vu_common.cmx $^
+
 
 TF_MODULES = \
 	ceti_common.cmo\
