@@ -1,25 +1,31 @@
 (*Fault Localization*)
 
 open Cil
+open Cil_common
 open Vu_common
 open Ceti_common
 module E = Errormsg
 module H = Hashtbl
 module P = Printf
+module SS = Set.Make(String)
+
+let fl_alg = ref 1 (*1: ochiai, ow: tarantula*)
+let min_sscore:float ref = ref 0.5
+let top_n_sids:int ref = ref 10
 
 type inp_t = string list  (*e.g., *)
 type outp_t = string 
 type testcase_t = inp_t*outp_t
 
-let string_of_tc (tc:testcase_t) : string = 
-  let inp,outp = tc in 
-  let inp = string_of_list ~delim:"; " inp in
-  "([" ^ inp ^ "]" ^ ", " ^ outp ^ "]"
 
-let string_of_tcs (tcs:testcase_t list) :string = 
+let string_of_tc ?(delim="; ") (tc:testcase_t) : string = 
+  let inp,outp = tc in 
+  let inp = string_of_list ~delim:delim inp in
+  "inp: " ^ inp ^ ", outp: " ^ outp
+
+let string_of_tcs ?(delim="; ") (tcs:testcase_t list) :string = 
   let tcs = L.map string_of_tc tcs in 
-  let tcs = string_of_list ~delim:"; " tcs in
-  "["^ tcs ^ "]"
+  string_of_list ~delim:delim tcs
 
 
 let mk_testscript (testscript:string) (tcs:testcase_t list) =
@@ -57,8 +63,6 @@ let mk_run_testscript testscript prog prog_output (tcs:testcase_t list) =
 
 
 class uTest (filename:string) = object(self)
-
-  val filename = filename
 
   val mutable mytcs = []
   val mutable mygoods = []
@@ -115,8 +119,17 @@ class uTest (filename:string) = object(self)
     let goods,bads = self#compare_outputs prog_output mytcs in 
     let nbads = L.length bads in
     if nbads = 0 then (ealert "All tests passed. Exit!"; exit 0)
-    else (ealert "%d/%d tests failed. Processing .." nbads (L.length mytcs));
+    else (ealert "%d/%d tests failed." nbads (L.length mytcs));
+    P.printf "%s\n%!" (string_of_tcs ~delim:"\n" bads);
     
+    if !vdebug then (
+      let tgoods = L.sort (fun (_,o1) (_,o2) -> compare o1 o2) goods in
+      P.printf "%d good inputs\n%s\n%!" (L.length goods) (string_of_tcs ~delim:"\n" tgoods);
+      let tbads = L.sort (fun (_,o1) (_,o2) -> compare o1 o2) bads in
+      P.printf "%d bad inputs\n%s\n%!" (L.length bads) (string_of_tcs ~delim:"\n" tbads);
+
+    );
+
     mygoods <- goods;
     mybads <- bads
 
@@ -187,7 +200,7 @@ class coverageVisitor = object(self)
     ChangeDoChildrenPost(f, action)
 end
 
-type sscore = int*float (* sscore = (sid,suspicious score) *)
+type sidscore_t = sid_t*float (* sidscore_t = (sid,suspicious score) *)
 class faultloc 
   (ast:file) 
   (goods:testcase_t list) 
@@ -200,65 +213,62 @@ object(self)
   val bads = bads
   val stmt_ht = stmt_ht
 
-  method fl fl_alg min_sscore: sid_t list = 
-    E.log "*** Fault Localization ***\n";
+  method get_susp_sids fl_alg : sidscore_t list = 
+    P.printf "*** Fault Localization ***\n%!";
 
     assert (L.length bads > 0) ;
-    let sscores:sscore list = 
-      if L.length goods = 0 then 
-	H.fold (fun sid _ rs -> (sid,min_sscore)::rs) stmt_ht [] 
-      else
-	let ast_bn =  
-	  let tdir = Filename.dirname ast.fileName in
-	  let tdir = mkdir_tmp ~temp_dir:tdir "faultloc" "" in
-	  Filename.concat tdir (Filename.basename ast.fileName) 
-	in
+    if L.length goods = 0 then(
+      P.printf "No good tests, faultloc will not be accurate !\n%!";
+      H.fold (fun sid _ rs -> (sid,1.)::rs) stmt_ht [] 
+    )
+    else(
+      
+      let ast_bn =  
+	let tdir = Filename.dirname ast.fileName in
+	let tdir = mkdir_tmp ~temp_dir:tdir "faultloc" "" in
+	Filename.concat tdir (Filename.basename ast.fileName) 
+      in
+      
+      (*create cov file*)
+      let fileName_cov = ast_bn ^ ".cov.c"  in
+      let fileName_path = ast_bn ^ ".path"  in
+      self#coverage (copy_obj ast) fileName_cov fileName_path;
+      
+      (*compile cov file*)
+      let prog:string = compile fileName_cov in
+      
+      (*run prog to obtain good/bad paths*)
+      let trace_generic = ast_bn ^ ".path" in
+      let trace_g = ast_bn ^ ".gpath" in
+      let trace_b = ast_bn ^ ".bpath" in
+      
+      (*good path*)
+      mk_run_testscript (ast_bn ^ ".g.sh") prog 
+	(ast_bn ^ ".outputs_g_dontcare") goods;
+      Unix.rename trace_generic trace_g;
 	
-	(*create cov file*)
-	let fileName_cov = ast_bn ^ ".cov.c"  in
-	let fileName_path = ast_bn ^ ".path"  in
-	self#coverage (copy_obj ast) fileName_cov fileName_path;
+      (*bad path*)
+      mk_run_testscript (ast_bn ^ ".b.sh") prog 
+	(ast_bn ^ ".outputs_b_dontcare") bads;
+      Unix.rename trace_generic trace_b;
 	
-	(*compile cov file*)
-	let prog:string = compile fileName_cov in
-	
-	(*run prog to obtain good/bad paths*)
-	let path_generic = ast_bn ^ ".path" in
-	let path_g = ast_bn ^ ".gpath" in
-	let path_b = ast_bn ^ ".bpath" in
-	
-	(*good path*)
-	mk_run_testscript (ast_bn ^ ".g.sh") prog 
-	  (ast_bn ^ ".outputs_g_dontcare") goods;
-	Unix.rename path_generic path_g;
-	
-	(*bad path*)
-	mk_run_testscript (ast_bn ^ ".b.sh") prog 
-	  (ast_bn ^ ".outputs_bad_dontcare") bads;
-	Unix.rename path_generic path_b;
-	
-	let n_g, ht_g = self#analyze_path path_g in
-	let n_b, ht_b = self#analyze_path path_b in
-	self#compute_sscores fl_alg n_g ht_g n_b ht_b
-    in
+      let (n_g:int), ht_g = self#analyze_trace trace_g in
+      assert (n_g = L.length goods);
+      
+      let (n_b:int), ht_b = self#analyze_trace trace_b in
+      assert (n_b = L.length bads);
+      
+      self#get_sscores fl_alg n_g ht_g n_b ht_b
+    )
 
-    (*remove all susp stmts in main, which cannot have anything except call
-      to mainQ, everything in main will be deleted when instrumenting main*)
-    let idx = ref 0 in 
-    let sscores = L.filter (fun (sid,score) -> 
-      let s,f = H.find stmt_ht sid in
-      if score >= min_sscore && f.svar.vname <> "main" then(
-	E.log "%d. sid %d in fun '%s' (score %g)\n%a\n"
-	  !idx sid f.svar.vname score dn_stmt s;
-	incr idx;
-	true
-      ) else false
-    ) sscores in
+  method get_top_n (ssids:sidscore_t list) (top_n:int) (filter_f: sidscore_t -> bool) 
+    : sidscore_t list = 
 
-    ealert "FL: found %d stmts with sscores >= %g" 
-      (L.length sscores) min_sscore;
-    
-    L.map fst sscores
+    let ssids = L.filter filter_f ssids in
+    ealert "FL: found %d ssids with after filtering" (L.length ssids);
+    let ssids = take top_n ssids in (*consider only n top susp stmts*)      
+    L.iter (fun (sid,score) -> P.printf "sid %d, score %g\n%!" sid score) ssids;
+    ssids
 
       
   method private coverage (ast:file) (filename_cov:string) (filename_path:string) = 
@@ -284,41 +294,44 @@ object(self)
   write_src filename_cov  ast
 
   (* Analyze execution path *)    
-  method private analyze_path (filename:string): int * (int,int) H.t= 
+  method private analyze_trace (filename:string): int * (int,int) H.t= 
 
     if !vdebug then E.log "** Analyze exe path '%s'\n" filename;
 
-    let tc_ctr = ref 0 in
-    let ht_stat = H.create 1024 in 
-    let mem = H.create 1024 in 
+    let tc_ctr = ref 0 in (*which test traces belong to*)
+    let ht_occurs:(sid_t,int) H.t = H.create 1024 in 
+    let mem:(sid_t*int,unit) H.t = H.create 1024 in 
+
     let lines = read_lines filename in 
-    L.iter(fun line -> 
-      let sid = int_of_string line in 
-      if sid = 0 then (
-	incr tc_ctr;
-	H.clear mem;
+
+    L.iter(function
+    | 0 -> incr tc_ctr; H.clear mem  (*0 markes the beginning of a test run*)
+
+    | _ as sid ->
+      let sid_tc = (sid, !tc_ctr) in
+      if not (H.mem mem sid_tc) then (
+	H.add mem sid_tc ();
+	
+	let n_occurs = 
+	  if not (H.mem ht_occurs sid) then 1
+	  else succ (H.find ht_occurs sid)
+	in 
+	H.replace ht_occurs sid n_occurs
       )
-      else (
-	let sid_tc = (sid, !tc_ctr) in
-	if not (H.mem mem sid_tc) then (
-	  H.add mem sid_tc ();
-	  
-	  let n_occurs = 
-	    if not (H.mem ht_stat sid) then 1
-	    else succ (H.find ht_stat sid)
-	      
-	  in H.replace ht_stat sid n_occurs
-	)
-      )
-    )lines;
-    !tc_ctr, ht_stat
+    ) (L.map int_of_string lines);
+
+    (* P.printf "tc_ctr %d\n%!" !tc_ctr; *)
+    (* H.iter (fun sid noccurs ->  *)
+    (*   P.printf "sid %d occurs %d times \n%!" sid noccurs) ht_occurs; *)
+
+    !tc_ctr, ht_occurs
 
 
-  method private compute_sscores 
+  method private get_sscores 
     (fl_alg:int)
-    (n_g:int) (ht_g:(int,int) H.t) 
-    (n_b:int) (ht_b:(int,int) H.t) 
-    : sscore list =
+    (n_g:int) (ht_g:(sid_t,int) H.t) 
+    (n_b:int) (ht_b:(sid_t,int) H.t) 
+    : sidscore_t list =
     
     assert(n_g <> 0);
     assert(n_b <> 0);
@@ -338,20 +351,26 @@ object(self)
     let n_g = float_of_int n_g in
     let n_b = float_of_int n_b in
 
-    let rs = H.fold (fun sid _ rs ->
+    let sscores:(sid_t*float) list  = H.fold (fun sid _ sscores ->
       let get_n_occur sid (ht: (int,int) H.t) : float=
 	if H.mem ht sid then float_of_int(H.find ht sid) else 0. 
       in
       let good = get_n_occur sid ht_g in
       let bad = get_n_occur sid ht_b in
+      (*P.printf "sid %d, bad %g n_bad %g good %g n_good %g\n%!" sid bad n_b good n_g;*)
       let score =  alg bad n_b good n_g in
-      
-      (sid,score)::rs
+      (*P.printf "score %g\n%!" score ;*)
+
+      (sid,score)::sscores
 
     ) ht_sids [] in 
 
-    let rs = L.sort (fun (_,score1) (_,score2) -> compare score2 score1) rs in
-    rs
+    let sscores:sidscore_t list = 
+      L.sort (fun (_,score1) (_,score2) -> compare score2 score1) sscores in
+
+    (*L.iter (fun (sid,score) -> P.printf "sid %d has score %g\n%!" sid score) sscores;*)
+
+    sscores
 
 
   (*
@@ -366,13 +385,9 @@ object(self)
       (bad /. tbad) /. ((good /. tgood) +. (bad /. tbad))
 
   method private alg_ochiai bad tbad good tgood = 
-      bad /. sqrt(tbad *. (bad +. good))
+      bad /. sqrt(tbad *.tgood)
     
 end
 
-
-let fl_alg = ref 1 (*1: ochiai, ow: tarantula*)
-let min_sscore:float ref = ref 0.5
-let top_n_sids:int ref = ref 10
 
 

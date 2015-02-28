@@ -54,6 +54,8 @@ int Inhibit_Biased_Climb (int Cur_Vertical_Sep,
   return (Climb_Inhibit ? 
 	  100 + Up_Separation
 	  : Up_Separation);
+  //return (Climb_Inhibit ? Up_Separation + 300 /* operand mutation NOZCROSS */ : Up_Separation);
+
 }
 
 int Non_Crossing_Biased_Climb(int Cur_Vertical_Sep, 
