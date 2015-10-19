@@ -101,12 +101,12 @@ def get_data(tpl, data_l):
 
 #call ocaml prog to transform file
 def worker_transform(wid, src, sids, tpl, xinfo, idxs):
-    #$ ./tf /tmp/cece_1392070907_eedfba/p.c 
+    #$ ./ceti /tmp/cece_1392070907_eedfba/p.c 
     #--only_transform --sids "3" --tpl 1 --xinfo z3_c0 --idxs "0 1"
     
     if vdebug: print ('worker {}: transform {} sids {} tpl {} xinfo {} idxs {} ***'
                       .format(wid, src,tpl,sids,xinfo,idxs))
-    cmd = ('./tf {} '
+    cmd = ('./ceti {} '
            '--only_transform --sids "{}" --tpl {} --idxs "{}" --xinfo {}{}'
            .format(src,sids,tpl,idxs,xinfo, 
                    " --debug" if vdebug else ""))
@@ -126,7 +126,7 @@ def worker_transform(wid, src, sids, tpl, xinfo, idxs):
 
 
     #obtained the created result
-    #Alert: Transform success: ## '/tmp/cece_4b2065/q.bug2.c.s1.t5_z3_c1.tf.c' ##  __cil_tmp4 = (x || y) || z; ## __cil_tmp4 = (x || y) && z;
+    #Alert: Transform success: ## '/tmp/cece_4b2065/q.bug2.c.s1.t5_z3_c1.ceti.c' ##  __cil_tmp4 = (x || y) || z; ## __cil_tmp4 = (x || y) && z;
 
     rs_file, old_stmt, new_stmt = "", "", ""
 

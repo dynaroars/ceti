@@ -5,7 +5,6 @@ for i in {1..41}; do cilly bug$i.c --save-temps --noPrintLn --useLogicalOperator
 
 (*open Ceti_common*)
 
-
 open Cil
 
 module E = Errormsg
@@ -24,7 +23,7 @@ module VC = Vu_common
 (*filename formats*)
 let ginfo_s = P.sprintf "%s.info" (*f.c.info*)
 let arr_s = P.sprintf "%s.s%d.t%d.arr" (*f.c.s1.t3.arr*)
-let transform_s = P.sprintf "%s.s%s.%s.tf.c" (*f.c.s5.z3_c2.tf.c*)
+let transform_s = P.sprintf "%s.s%s.%s.ceti.c" (*f.c.s5.z3_c2.ceti.c*)
 
 
 type spy_t = CC.sid_t list*int*int*int list (*sid,cid,level,idxs*)
