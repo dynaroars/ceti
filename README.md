@@ -95,15 +95,15 @@ does not produce the expected outputs `/PATH/TO/ceti/examples/bugfix/p.outputs`
 0
 1
 ```
-We call `ceti` to create a new program that produces these expected outputs when given the above inputs.
+We call `ceti` to create a new program that produces these expected outputs when given the above inputs
 
 ```
-$ ./ceti ../examples/bugfix/p.tacas100.c ../examples/bugfix/a.inputs ../examples/bugfix/a.outputs
+$ ./ceti ../examples/bugfix/p.tcas100.c ../examples/bugfix/p.inputs ../examples/bugfix/p.outputs
 ...
 0. /tmp/CETI_789b61/p.tcas100.c.s1.t1_z1_c1.tf.c: bias = up_sep; ===> bias = uk_0 + uk_1 * up_sep; ===> uk_0 100, uk_1 1
 ```
 
-This results means CETI found a program (stored in `/tmp/CETI_789b61/p.tcas100.c.s1.t1_z1_c1.tf.c`) that passes the in/outputs by changing the statement `bias = up_sep;` to `bias = 100 + up_sep;`.  
+Here CETI finds a program (stored in `/tmp/CETI_789b61/p.tcas100.c.s1.t1_z1_c1.tf.c`) that passes the in/outputs by changing the statement `bias = up_sep;` to `bias = 100 + up_sep;`. 
 
 ### Experimentations ###
 
