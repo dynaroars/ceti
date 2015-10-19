@@ -94,7 +94,6 @@ We call `ceti` to create a new program that produces these expected outputs when
 ```
 $ ./ceti ../examples/bugfix/p.tcas100.c ../examples/bugfix/p.inputs ../examples/bugfix/p.outputs
 
-...
 #lots of msgs detailing CETI's runs
 
 0. /tmp/CETI_789b61/p.tcas100.c.s1.t1_z1_c1.tf.c: bias = up_sep; ===> bias = uk_0 + uk_1 * up_sep; ===> uk_0 100, uk_1 1
