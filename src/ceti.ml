@@ -4,9 +4,7 @@ for i in {1..41}; do cilly bug$i.c --save-temps --noPrintLn --useLogicalOperator
 *)
 
 (*open Ceti_common*)
-
 open Cil
-
 module E = Errormsg
 module L = List
 module A = Array
@@ -55,7 +53,6 @@ let progname_long:string = "Correcting Errors using Test Inputs"
 let progversion:float = 0.1
 let mainfunname:string = "mainQ"
 let synvarname:string = "ceti_q"
-
 
 let dlog s = if !VC.vdebug then E.log "%s" s else ()
 let dalert s = if !VC.vdebug then CC.ealert "%s" s else ()
@@ -946,7 +943,7 @@ let () = begin
        "e.g., --fl_sids \"1 3 7\".");
 
     "--fl_alg", Arg.Set_int FL.fl_alg,
-    P.sprintf 
+    P.sprintf
       " use fault loc algorithm: 1 Ochia, 2 Tarantula (default %d)" 
       !FL.fl_alg;
       
@@ -1019,7 +1016,7 @@ let () = begin
     else raise (Arg.Bad "too many input args")
   in
 
-  let usage = P.sprintf "%s\nusage: tf src inputs outputs [options]\n" version in
+  let usage = P.sprintf "%s\nusage: ceti src inputs outputs [options]\n" version in
 
   Arg.parse (Arg.align arg_descrs) handle_arg usage;
 
