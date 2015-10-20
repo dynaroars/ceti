@@ -99,7 +99,7 @@ $ ./ceti ../examples/bugfix/p.tcas100.c ../examples/bugfix/p.inputs ../examples/
 0. /tmp/CETI_789b61/p.tcas100.c.s1.t1_z1_c1.tf.c: bias = up_sep; ===> bias = uk_0 + uk_1 * up_sep; ===> uk_0 100, uk_1 1
 ```
 
-The last line indicates that CETI creates a program (stored in `/tmp/CETI_789b61/p.tcas100.c.s1.t1_z1_c1.tf.c`) that passes the in/outputs by changing the statement `bias = up_sep;` to `bias = 100 + up_sep;`. 
+The last line indicates that CETI creates a program that passes the in/outputs by changing the statement `bias = up_sep;` to `bias = 100 + up_sep;`. 
 
 ### Experimentations ###
 
