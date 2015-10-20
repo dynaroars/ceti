@@ -119,7 +119,10 @@ $ for i in {1..41} do cilly bug$i.c --save-temps --noPrintLn --useLogicalOperato
 - run program (e.g., on our 32-core machine)
 
 ```
-$ for i in {1..41}; do  rm -rf /tmp/CETI_* &> t; echo "***** BEGIN $i *******"; time ./ceti ../benchmarks/tcas/orig/bug$i.cil.i ../benchmarks/tcas/tcas.orig.inputs ../benchmarks/tcas/tcas.orig.outputs --top_n_sids 80 --min_sscore 0.01 ;  echo "****** DONE $i ******"; done
+$ for i in {1..41}; do  rm -rf /tmp/CETI_* &> t; echo "***** BEGIN $i *******"; time ./ceti ../benchmarks/tcas/orig/bug
+$i.cil.i ../benchmarks/tcas/tcas.orig.inputs ../benchmarks/tcas/tcas.orig.outputs --top_n_sids 80 --min_sscore 0.01;  echo "****** DONE $i ******"; done                                                                          
+
+#output and time are logged in `tcas.log`
 ```
 
 ## Publications ##
