@@ -49,16 +49,10 @@ Given the *buggy* C program `/PATH/TO/ceti/examples/bugfix/p.tcas100.c`
 ```
 #!c
 
-  if(inhibit) {
-    bias = up_sep ; //bug, should be up_sep + 100                                             
-  }
-  else {
-    bias = up_sep;
-  }
-  if (bias > down_sep)
-    return 1;
-  else
-    return 0;
+  if(inhibit) {bias = up_sep} ; //bug, should be up_sep + 100                                             
+  else {bias = up_sep;}
+  if (bias > down_sep) return 1;
+  else return 0;
 }
 
 int mainQ(int inhibit, int up_sep, int down_sep){
@@ -99,31 +93,9 @@ We call `ceti` to create a new program that produces these expected outputs when
 
 ```
 $ ./ceti ../examples/bugfix/p.tcas100.c ../examples/bugfix/p.inputs ../examples/bugfix/p.outputs
-*** Get good/bad tcs ***
-Alert: 2/6 tests failed.
-inp: 1; 11; 110, outp: 1
-inp: 1; -20; 60, outp: 1
-write_src: '/tmp/CETI_789b61/p.tcas100.c.preproc.c'
-*** Fault Localization ***
-write_src: '/tmp/CETI_789b61/faultloc_91ada4/p.tcas100.c.cov.c'
-0. sid 5 in fun 'buggyQ' (score 0.707107)
-__cil_tmp7 = inhibit;
-1. sid 7 in fun 'mainQ' (score 0.707107)
-__cil_tmp5 = tmp;
-2. sid 6 in fun 'buggyQ' (score 0.707107)
-__cil_tmp8 = bias > down_sep;
-3. sid 4 in fun 'buggyQ' (score 0.707107)
-__cil_tmp6 = 0;
-4. sid 1 in fun 'buggyQ' (score 0.707107)
-bias = up_sep;
-Alert: FL: found 5 ssids with sscores >= 0.5
-Alert: Perform ** BugFix **
-Alert: Spy: Got 7 info from 5 sids
-[([5], 1, 4, [4]), ([7], 1, 4, [4]), ([6], 7, 2, [1]), ([6], 1, 4, [4]), ([4], 3, 1, [1]), ([4], 1, 4, [4]), ([1], 1, 4, [4])]
-KR: tasks 57
-workloads 4: [14, 14, 14, 15]
-worker 0: found fix for /tmp/CETI_789b61/p.tcas100.c.s1.t1_z1_c1.tf.c
-KR: summary (bugfix: True, stop after a repair found: True, parallel: True), '/tmp/CETI_789b61/p.tcas100.c', 1 / 57
+
+#lots of msgs detailing CETI's runs
+
 0. /tmp/CETI_789b61/p.tcas100.c.s1.t1_z1_c1.tf.c: bias = up_sep; ===> bias = uk_0 + uk_1 * up_sep; ===> uk_0 100, uk_1 1
 ```
 
