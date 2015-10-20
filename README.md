@@ -103,7 +103,7 @@ The last line indicates that CETI creates a program (stored in `/tmp/CETI_789b61
 
 ### Experimentations ###
 
-Reproducing experiments for FSE paper for the Tcas program
+Reproducing experiments for the Tcas program
 
 - the C file must have a mainQ function, see e.g., in tests/tcas/orig
 
@@ -119,9 +119,7 @@ $ for i in {1..41} do cilly bug$i.c --save-temps --noPrintLn --useLogicalOperato
 - run program (e.g., on our 32-core machine)
 
 ```
-#!shell
-
-$ for i in {1..41}; do  rm -rf /tmp/cece_* &> t; echo "***** BEGIN $i *******"; time ./tf ../test/tcas/orig/bug$i.cil.i ../test/tcas/tcas.orig.inputs ../test/tcas/tcas.orig.outputs --top_n_ssids 80 --min_sscore 0.01;  echo "****** DONE $i ******"; done
+$ for i in {1..41}; do  rm -rf /tmp/CETI_* &> t; echo "***** BEGIN $i *******"; time ./ceti ../benchmarks/tcas/orig/bug$i.cil.i ../benchmarks/tcas/tcas.orig.inputs ../benchmarks/tcas/tcas.orig.outputs --top_n_sids 80 --min_sscore 0.01 ;  echo "****** DONE $i ******"; done
 ```
 
 ## Publications ##
