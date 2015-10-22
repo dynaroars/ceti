@@ -130,7 +130,7 @@ Sometimes it is useful to preprocess input source code with `CIL`. For examples
 ```
 #!shell
 
-$ cilly file.c --save-temps --noPrintLn --useLogicalOperators   #now call CETI on the resulting `file.c.cil.i`
+$ cilly file.c --save-temps --noPrintLn --useLogicalOperators   #now call CETI on the resulting file.c.cil.i
 
 $ cilly file.c --save-temps --noPrintLn --noUseLogicalOperators   #This breaks and and or operator into multiple statements
 ```
