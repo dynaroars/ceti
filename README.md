@@ -125,6 +125,18 @@ $i.cil.i ../benchmarks/tcas/tcas.orig.inputs ../benchmarks/tcas/tcas.orig.output
 #output and time are logged in `tcas.log`
 ```
 
+## Trips and Tricks ##
+Sometimes it is useful to preprocess the file using cilly. For examples
+```
+#!shell
+
+$ cilly file.c --save-temps --noPrintLn --useLogicalOperators   #now call CETI on the resulting `file.c.cil.i`
+
+
+$ cilly file.c --save-temps --noPrintLn --noUseLogicalOperators   #This breaks and and or operator into multiple statements
+```
+
+
 ## Publications ##
 Additional information on CETI can be found from these papers
 
