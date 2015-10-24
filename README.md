@@ -99,11 +99,11 @@ $ ./ceti ../examples/bugfix/p.tcas100.c ../examples/bugfix/p.inputs ../examples/
 0. /tmp/CETI_789b61/p.tcas100.c.s1.t1_z1_c1.tf.c: bias = up_sep; ===> bias = uk_0 + uk_1 * up_sep; ===> uk_0 100, uk_1 1
 ```
 
-The last line indicates that CETI creates a program (stored in `/tmp/CETI_789b61/p.tcas100.c.s1.t1_z1_c1.tf.c`) that passes the in/outputs by changing the statement `bias = up_sep;` to `bias = 100 + up_sep;`. 
+The last line indicates that CETI creates a program that passes the in/outputs by changing the statement `bias = up_sep;` to `bias = 100 + up_sep;`. 
 
 ### Experimentations ###
 
-Reproducing experiments for FSE paper for the Tcas program
+Reproducing experiments for the Tcas program
 
 - the C file must have a mainQ function, see e.g., in tests/tcas/orig
 
@@ -119,10 +119,22 @@ $ for i in {1..41} do cilly bug$i.c --save-temps --noPrintLn --useLogicalOperato
 - run program (e.g., on our 32-core machine)
 
 ```
+$ for i in {1..41}; do  rm -rf /tmp/CETI_* &> t; echo "***** BEGIN $i *******"; time ./ceti ../benchmarks/tcas/orig/bug
+$i.cil.i ../benchmarks/tcas/tcas.orig.inputs ../benchmarks/tcas/tcas.orig.outputs --top_n_sids 80 --min_sscore 0.01;  echo "****** DONE $i ******"; done                                                                          
+
+#output and time are logged in `tcas.log`
+```
+
+## Trips and Tricks ##
+Sometimes it is useful to preprocess input source code with `CIL`. For examples
+```
 #!shell
 
-$ for i in {1..41}; do  rm -rf /tmp/cece_* &> t; echo "***** BEGIN $i *******"; time ./tf ../test/tcas/orig/bug$i.cil.i ../test/tcas/tcas.orig.inputs ../test/tcas/tcas.orig.outputs --top_n_ssids 80 --min_sscore 0.01;  echo "****** DONE $i ******"; done
+$ cilly file.c --save-temps --noPrintLn --useLogicalOperators   #now call CETI on the resulting file.c.cil.i
+
+$ cilly file.c --save-temps --noPrintLn --noUseLogicalOperators   #This breaks and and or operator into multiple statements
 ```
+
 
 ## Publications ##
 Additional information on CETI can be found from these papers
