@@ -113,14 +113,12 @@ let find_fun (ast:file) (funname:string) : fundec =
   |None -> E.s(E.error "fun '%s' not in '%s'!" funname ast.fileName)
 
 
-
 (*apply binary op to a list of exps, e.g, + [v1,..,vn] =>  v1 + .. + vn*)
 let apply_binop (op:binop) (exps:exp list): exp = 
   assert (L.length exps > 0);
   let e0 = L.hd exps in 
   let ty = typeOf e0 in
   L.fold_left (fun e e' -> BinOp(op,e,e',ty)) e0 (L.tl exps)
-
 
 (*
   apply a list of ops, e.g., 
@@ -946,7 +944,6 @@ let () = begin
 	" use fault loc algorithm: 1 Ochia, 2 Tarantula (default %d)" 
 	!FL.fl_alg;
       
-      
       "--top_n_sids", Arg.Set_int FL.top_n_sids,
       P.sprintf " consider this # of suspicious stmts (default %d)" 
       !FL.top_n_sids;
@@ -955,10 +952,11 @@ let () = begin
       P.sprintf " fix suspicious stmts with at least this score (default %g)" 
 		!FL.min_sscore;
       
-      "--tpl_ids", Arg.String (fun s -> 
-			       tpl_ids := L.map int_of_string (VC.str_split s)
-			      ),
-    " only use these bugfix template ids, e.g., --tpl_ids \"1 3\"";
+      "--tpl_ids", Arg.String (
+		       fun s -> tpl_ids :=
+				  L.map int_of_string (VC.str_split s)
+		     ),
+      " only use these bugfix template ids, e.g., --tpl_ids \"1 3\"";
       
       "--tpl_level", Arg.Set_int tpl_level,
       P.sprintf " fix tpls up to and including this level (default %d)" 
@@ -971,7 +969,6 @@ let () = begin
       "--only_peek", Arg.Set only_peek, 
       P.sprintf " only do peek the stmt given in --sid (default %b)" 
 		!only_peek;
-      
       
       (* STAND ALONE PROGRAM *)
       (* transforming file*)
@@ -1073,7 +1070,6 @@ let () = begin
   if !only_peek then (
     ignore (visitCilFileSameGlobals ((new peekVisitor) !sids) ast);
     exit 0);
-
 
   (* determine if file contains synthesis stmts*)
   let syn_sids = find_synstmts ast in 
