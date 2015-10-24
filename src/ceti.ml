@@ -23,7 +23,6 @@ let ginfo_s = P.sprintf "%s.info" (*f.c.info*)
 let arr_s = P.sprintf "%s.s%d.t%d.arr" (*f.c.s1.t3.arr*)
 let transform_s = P.sprintf "%s.s%s.%s.ceti.c" (*f.c.s5.z3_c2.ceti.c*)
 
-
 type spy_t = CC.sid_t list*int*int*int list (*sid,cid,level,idxs*)
 
 let string_of_spys ((sids,cid,level,idxs):spy_t): string = 
@@ -920,93 +919,95 @@ let () = begin
   in 
 
   let arg_descrs = [
-    "--debug", Arg.Set VC.vdebug, 
-    P.sprintf " shows debug info (default %b)" !VC.vdebug;
-
-    "--no_parallel", Arg.Set no_parallel, 
-    P.sprintf " don't use multiprocessing (default %b)" !no_parallel;
-
-    "--no_bugfix", Arg.Set no_bugfix, 
-    P.sprintf " don't do bugfix (default %b)" !no_bugfix;
-    
-    "--no_stop", Arg.Set no_stop, 
-    P.sprintf " don't stop after finding a fix (default %b)" !no_stop;
-
-    "--no_global_vars", Arg.Set no_global_vars,
-    P.sprintf " don't consider global variables when modify stmts (default %b)" 
-      !no_global_vars;
-
-    "--fl_sids", Arg.String (fun s -> 
-      fl_sids := L.map int_of_string (VC.str_split s)),
-    (P.sprintf "%s" 
-       " don't run fault loc, use the given suspicious stmts, " ^
-       "e.g., --fl_sids \"1 3 7\".");
-
-    "--fl_alg", Arg.Set_int FL.fl_alg,
-    P.sprintf
-      " use fault loc algorithm: 1 Ochia, 2 Tarantula (default %d)" 
-      !FL.fl_alg;
+      "--debug", Arg.Set VC.vdebug, 
+      P.sprintf " shows debug info (default %b)" !VC.vdebug;
       
-   
-    "--top_n_sids", Arg.Set_int FL.top_n_sids,
-    P.sprintf " consider this # of suspicious stmts (default %d)" 
+      "--no_parallel", Arg.Set no_parallel, 
+      P.sprintf " don't use multiprocessing (default %b)" !no_parallel;
+      
+      "--no_bugfix", Arg.Set no_bugfix, 
+      P.sprintf " don't do bugfix (default %b)" !no_bugfix;
+      
+      "--no_stop", Arg.Set no_stop, 
+      P.sprintf " don't stop after finding a fix (default %b)" !no_stop;
+      
+      "--no_global_vars", Arg.Set no_global_vars,
+      P.sprintf " don't consider global variables when modify stmts (default %b)" 
+		!no_global_vars;
+
+      "--fl_sids", Arg.String (fun s -> 
+			       fl_sids := L.map int_of_string (VC.str_split s)),
+      (P.sprintf "%s" 
+		 " don't run fault loc, use the given suspicious stmts, " ^
+	 "e.g., --fl_sids \"1 3 7\".");
+      
+      "--fl_alg", Arg.Set_int FL.fl_alg,
+      P.sprintf
+	" use fault loc algorithm: 1 Ochia, 2 Tarantula (default %d)" 
+	!FL.fl_alg;
+      
+      
+      "--top_n_sids", Arg.Set_int FL.top_n_sids,
+      P.sprintf " consider this # of suspicious stmts (default %d)" 
       !FL.top_n_sids;
-
-    "--min_sscore", Arg.Set_float FL.min_sscore,
-    P.sprintf " fix suspicious stmts with at least this score (default %g)" 
-      !FL.min_sscore;
-    
-    "--tpl_ids", Arg.String (fun s -> 
-      tpl_ids := L.map int_of_string (VC.str_split s)
-    ),
+      
+      "--min_sscore", Arg.Set_float FL.min_sscore,
+      P.sprintf " fix suspicious stmts with at least this score (default %g)" 
+		!FL.min_sscore;
+      
+      "--tpl_ids", Arg.String (fun s -> 
+			       tpl_ids := L.map int_of_string (VC.str_split s)
+			      ),
     " only use these bugfix template ids, e.g., --tpl_ids \"1 3\"";
+      
+      "--tpl_level", Arg.Set_int tpl_level,
+      P.sprintf " fix tpls up to and including this level (default %d)" 
+		!tpl_level;
+      
+      "--only_spy", Arg.Set only_spy, 
+      P.sprintf " only do spy (default %b)" 
+		!only_spy;
 
-    "--tpl_level", Arg.Set_int tpl_level,
-    P.sprintf " fix tpls up to and including this level (default %d)" 
-      !tpl_level;
-
-    "--only_spy", Arg.Set only_spy, 
-    P.sprintf " only do spy (default %b)" 
-      !only_spy;
-
-    "--only_peek", Arg.Set only_peek, 
-    P.sprintf " only do peek the stmt given in --sid (default %b)" 
-      !only_peek;
-
-
-    (* STAND ALONE PROGRAM *)
-    (* transforming file*)
-    "--only_transform", Arg.Set only_transform, 
-    " stand alone prog to transform code, " ^ 
-      "e.g., --only_transform --sid 1 --tpl 1 --idxs \"3 7 8\" --xinfo z2_c5";
-
-    "--sids", Arg.String (fun s-> 
-      let sids' =  L.map int_of_string (VC.str_split s) in
-      if L.exists (fun i -> i < 0) sids' then (
-	raise(Arg.Bad (P.sprintf 
-			 "arg --sids must contain non-neg ints, [%s]" 
-			 (VC.string_of_ints sids'))));
-      sids := sids'), 
-    " e.g., --sids \"3 7 8\"";
-
-    "--tpl", Arg.Int (fun i -> 
-      if i < 0 then raise (Arg.Bad "arg --tpl must be > 0");
-      tpl:=i), 
-    " e.g., --tpl 3";
-
-    "--xinfo", Arg.Set_string xinfo, " e.g., --xinfo z2_c5";
-    "--idxs", Arg.String (fun s-> 
-      let idxs' =  L.map int_of_string (VC.str_split s) in
-      if L.exists (fun i -> i < 0) idxs' then (
-	raise(Arg.Bad (P.sprintf 
-			 "arg --idxs must contain non-neg ints, [%s]" 
-			 (VC.string_of_ints idxs'))));
-      idxs := idxs'), 
-    " e.g., --idxs \"3 7 8\"";
-    
+      "--only_peek", Arg.Set only_peek, 
+      P.sprintf " only do peek the stmt given in --sid (default %b)" 
+		!only_peek;
+      
+      
+      (* STAND ALONE PROGRAM *)
+      (* transforming file*)
+      "--only_transform", Arg.Set only_transform, 
+      " stand alone prog to transform code, " ^ 
+	"e.g., --only_transform --sid 1 --tpl 1 --idxs \"3 7 8\" --xinfo z2_c5";
+      
+      "--sids", Arg.String (fun s-> 
+			    let sids' =  L.map int_of_string (VC.str_split s) in
+			    if L.exists (fun i -> i < 0) sids' then (
+			      raise(Arg.Bad (
+					P.sprintf 
+					  "arg --sids must contain non-neg ints, [%s]" 
+					  (VC.string_of_ints sids'))));
+			    sids := sids'), 
+      " e.g., --sids \"3 7 8\"";
+      
+      "--tpl", Arg.Int (fun i -> 
+			if i < 0 then raise (Arg.Bad "arg --tpl must be > 0");
+			tpl:=i), 
+      " e.g., --tpl 3";
+      
+      "--xinfo", Arg.Set_string xinfo, " e.g., --xinfo z2_c5";
+      "--idxs", Arg.String (
+		    fun s -> 
+		    let idxs' =  L.map int_of_string (VC.str_split s) in
+		    if L.exists (fun i -> i < 0) idxs' then (
+		      raise(Arg.Bad (
+				P.sprintf 
+				  "arg --idxs must contain non-neg ints, [%s]" 
+				  (VC.string_of_ints idxs'))));
+		    idxs := idxs'), 
+      " e.g., --idxs \"3 7 8\"";
+      
   ] in
-
-
+  
   let handle_arg s =
     if !filename = "" then (
       VC.chk_exist s ~msg:"require filename"; filename := s
@@ -1015,14 +1016,14 @@ let () = begin
     else if !outputs = "" then outputs := s
     else raise (Arg.Bad "too many input args")
   in
-
-  let usage = P.sprintf "%s\nusage: ceti src inputs outputs [options]\n" version in
+  
+  let usage = P.sprintf "%s\nusage: ceti src in_file out_file [options]\n" version in
 
   Arg.parse (Arg.align arg_descrs) handle_arg usage;
-
+  
   initCIL();
-  Cil.lineDirectiveStyle:= None;
-  Cprint.printLn:=false; (*don't print line #*)
+  Cil.lineDirectiveStyle := None;
+  Cprint.printLn := false; (*don't print line #*)
 
   (* for Cil to retain &&, ||, ?: instead of transforming them to If stmts *)
   Cil.useLogicalOperators := true; 
@@ -1050,7 +1051,7 @@ let () = begin
   VC.chk_exist !outputs ~msg:"require outputs file";
 
   (*create a temp dir to process files*)
-  let tdir = VC.mkdir_tmp progname "" in
+  let tdir = VC.mkdir_tmp ~temp_dir:"/var/tmp" progname "" in
   let fn' = P.sprintf "%s/%s" tdir (Filename.basename !filename) in 
   VC.exec_cmd (P.sprintf "cp %s %s" !filename fn');
   
