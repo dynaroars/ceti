@@ -1,1 +1,0 @@
-for i in {1..41}; do  rm -rf /tmp/CETI_* &> t; echo "***** BEGIN $i *******"; time ./ceti ../benchmarks/tcas/orig/bug$i.cil.i ../benchmarks/tcas/tcas.orig.inputs ../benchmarks/tcas/tcas.orig.outputs --top_n_sids 80 --min_sscore 0.01;  echo "****** DONE $i ******"; done
