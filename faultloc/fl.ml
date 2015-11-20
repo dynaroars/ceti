@@ -190,15 +190,13 @@ class uTest (filename:string) = object(self)
 
 
   method private get_goodbad_tcs = 
-    P.printf "*** Get good/bad tcs ***\n%!FUCK";
+    P.printf "*** Get good/bad tcs ***\n%!";
     
     (*compile and run program on tcs*)
     let prog:string = compile filename in
-    P.printf "gh0";    
     let testscript =  filename ^ ".sh" in
     let prog_output:string = filename ^ ".routputs" in
     mk_run_testscript testscript prog prog_output mytcs;
-    P.printf "gh1";    
     (*check if prog passes all inputs:
       If yes then exit. If no then there's bug to fix*)
     let goods,bads = self#compare_outputs prog_output mytcs in 
