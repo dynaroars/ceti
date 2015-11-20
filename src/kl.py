@@ -148,17 +148,20 @@ def worker_klee (wid, src):
 
     #compile file with llvm
     include_path = "~/Src/Devel/KLEE/klee/include"
-    llvm_opts =  "--optimize -emit-llvm -c"
+    #llvm_opts =  "--optimize -emit-llvm -c"
+    llvm_opts =  "-emit-llvm -c"
     obj = os.path.splitext(src)[0] + os.extsep + 'o'
     
-    cmd = "llvm-gcc -I {} {} {} -o {}".format(include_path,llvm_opts,src,obj)
+    #cmd = "llvm-gcc -I {} {} {} -o {}".format(include_path,llvm_opts,src,obj)
+    cmd = "clang -I {} {} {} -o {}".format(include_path,llvm_opts,src,obj)
     if vdebug: print "$ {}".format(cmd)
 
     proc = sp.Popen(cmd,shell=True,stdin=sp.PIPE,stdout=sp.PIPE,stderr=sp.PIPE)
     rs,rs_err = proc.communicate()
 
     assert not rs, rs
-    if "llvm-gcc" in rs_err or "error" in rs_err:
+    #if "llvm-gcc" in rs_err or "error" in rs_err:
+    if "clang" in rs_err or "error" in rs_err:
         print 'worker {}: compile error:\n{}'.format(wid,rs_err)
         return None
     
@@ -175,6 +178,7 @@ def worker_klee (wid, src):
                  .format(timeout,klee_outdir))
 
     cmd = "klee {} {}".format(klee_opts,obj).strip()
+
     if vdebug: print "$ {}".format(cmd)
     proc = sp.Popen(cmd,shell=True,stdout=sp.PIPE, stderr=sp.STDOUT)
 
