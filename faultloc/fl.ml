@@ -136,7 +136,7 @@ let run_testscript (testscript:string) (prog:string) (prog_output:string) =
   (try Unix.unlink prog_output with _ -> () ) ; 
 
   let prog = P.sprintf "%s" prog in (*"./%s"*)
-  let cmd = P.sprintf "sh %s %s %s &> /dev/null" testscript prog prog_output in
+  let cmd = P.sprintf "/bin/bash %s %s %s &> /dev/null" testscript prog prog_output in
   exec_cmd cmd
 
 
@@ -190,15 +190,15 @@ class uTest (filename:string) = object(self)
 
 
   method private get_goodbad_tcs = 
-    P.printf "*** Get good/bad tcs ***\n%!";
+    P.printf "*** Get good/bad tcs ***\n%!FUCK";
     
     (*compile and run program on tcs*)
     let prog:string = compile filename in
-    
+    P.printf "gh0";    
     let testscript =  filename ^ ".sh" in
     let prog_output:string = filename ^ ".routputs" in
     mk_run_testscript testscript prog prog_output mytcs;
-    
+    P.printf "gh1";    
     (*check if prog passes all inputs:
       If yes then exit. If no then there's bug to fix*)
     let goods,bads = self#compare_outputs prog_output mytcs in 
