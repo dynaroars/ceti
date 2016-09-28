@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2.7
 import subprocess as sp
 import os
 import sys
@@ -149,7 +149,7 @@ def worker_klee (wid, src):
     #compile file with llvm
     include_path = "~/Src/Devel/KLEE/klee/include"
     #llvm_opts =  "--optimize -emit-llvm -c"
-    llvm_opts =  "-emit-llvm -c"
+    llvm_opts =  "-emit-llvm -c -fbracket-depth=10000"
     obj = os.path.splitext(src)[0] + os.extsep + 'o'
     
     #cmd = "llvm-gcc -I {} {} {} -o {}".format(include_path,llvm_opts,src,obj)

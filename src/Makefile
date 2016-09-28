@@ -35,29 +35,6 @@ all: ceti
 # NOTE: Module order is important!  OCaml module dependencies cannot
 # be cyclic, and the order presented must respect the dependency order.
 
-# CETI_COMMON_MODULES = \
-# 	ceti_common.cmo \
-
-# ceti_common: $(CETI_COMMON_MODULES:.cmo=.cmx) 
-# 	$(OCAMLOPT) -o $@ unix.cmxa str.cmxa nums.cmxa cil.cmxa vu_common.cmx cil_common.cmx $^
-
-
-# FL_MODULES = \
-# 	ceti_common.cmo\
-# 	fl.cmo \
-
-# fl: $(FL_MODULES:.cmo=.cmx) 
-# 	$(OCAMLOPT) -o $@ unix.cmxa str.cmxa nums.cmxa cil.cmxa cil_common.cmx vu_common.cmx $^
-
-# FL_TEST_MODULES = \
-# 	ceti_common.cmo\
-# 	fl.cmo \
-# 	fl_test.cmo
-
-# fl_test: $(FL_TEST_MODULES:.cmo=.cmx) 
-# 	$(OCAMLOPT) -o $@ unix.cmxa str.cmxa nums.cmxa cil.cmxa vu_common.cmx $^
-
-
 CETI_MODULES = \
 	ceti.cmo \
 
@@ -71,4 +48,4 @@ ALL_MODULES =  $(MAIN_MODULES)
 -include $(ALL_MODULES:.cmo=.d)
 
 clean:
-	rm -f *.cmo *.cmi *.d *.cmx *.dx *.o ceti_common ceti
+	rm -f *.cmo *.cmi *.d *.cmx *.dx *.o ceti
