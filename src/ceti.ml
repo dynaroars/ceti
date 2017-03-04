@@ -277,19 +277,20 @@ let mk_uk
   let vi:varinfo = makeLocalVar main_fd vname uty in
   let lv:lval = var vi in 
   
-  (*klee_make_symbolic(&uk,sizeof(uk),"uk") *)
-  (* let mk_sym_instr:instr = *)
-  (*   CC.mk_call "klee_make_symbolic"  *)
-  (* 	       [mkAddrOf(lv); SizeOfE(Lval lv); Const (CStr vname)] in *)
-
+  (*klee_make_symbolic(&uk,sizeof(uk),"uk")*)
   let mk_sym_instr:instr =
-    CC.mk_call ~av:(Some lv) "__VERIFIER_nondet_int" [] in
+    CC.mk_call "klee_make_symbolic"
+  	       [mkAddrOf(lv); SizeOfE(Lval lv); Const (CStr vname)]
+  in
   
-  (* "klee_assume" *)
-  let klee_assert_lb:instr = CC.mk_call "__VERIFIER_assume"
+      (* let mk_sym_instr:instr = *)
+  (*   CC.mk_call ~av:(Some lv) "__VERIFIER_nondet_int" [] in *)
+  
+  
+  let klee_assert_lb:instr = CC.mk_call "klee_assume"
 					[BinOp(Le,min_v,Lval lv, CC.boolTyp)] in 
   
-  let klee_assert_ub:instr = CC.mk_call "__VERIFIER_assume"
+  let klee_assert_ub:instr = CC.mk_call "klee_assume"
 					[BinOp(Le,Lval lv, max_v, CC.boolTyp)] in 
   
   vs := !vs@[vi];
@@ -341,8 +342,8 @@ let mk_main (main_fd:fundec) (mainQ_fd:fundec) (tcs:FL.testcase_t list)
 				    (Const(CStr(s))::(L.map CC.exp_of_vi uks)) in 
   
   (*klee_assert(0);*)
-  (*let klee_assert_zero:instr = CC.mk_call "klee_assert" [zero] in *)
-  let klee_assert_zero:instr = CC.mk_call "__VERIFIER_error" [] in 
+  let klee_assert_zero:instr = CC.mk_call "klee_assert" [zero] in
+  (*let klee_assert_zero:instr = CC.mk_call "__VERIFIER_error" [] in *)
   
   
   let and_exps = apply_binop LAnd exps in
@@ -574,8 +575,8 @@ class bugfixTemplate_OPS_PR cname cid level = object(self)
 		  let uks = L.map CC.exp_of_vi uks in 
 		  
 		  let xor_exp = apply_binop BXor uks in		  
-		  (*let klee_assert_xor:instr = CC.mk_call "klee_assume" [xor_exp] in*)
-		  let klee_assert_xor:instr = CC.mk_call "__VERIFIER_assume" [xor_exp] in
+		  let klee_assert_xor:instr = CC.mk_call "klee_assume" [xor_exp] in
+		  (*let klee_assert_xor:instr = CC.mk_call "__VERIFIER_assume" [xor_exp] in*)
 		  instrs := !instrs@[klee_assert_xor];
 		  
 		  apply_bops e1 e2 uks bops
@@ -906,10 +907,10 @@ let transform
   visitCilFileSameGlobals ((new instrCallVisitor) uks fiv#ht) ast;
 
   (*add include "klee/klee.h" to file*)
-  (*ast.globals <- (GText "#include \"klee/klee.h\"") :: ast.globals;*)
-  ast.globals <- (GText "extern void __VERIFIER_error();") :: ast.globals;
-  ast.globals <- (GText "extern int __VERIFIER_nondet_int();") :: ast.globals;
-  ast.globals <- (GText "extern void __VERIFIER_assume();") :: ast.globals;
+  ast.globals <- (GText "#include \"klee/klee.h\"") :: ast.globals;
+  (* ast.globals <- (GText "extern void __VERIFIER_error();") :: ast.globals; *)
+  (* ast.globals <- (GText "extern int __VERIFIER_nondet_int();") :: ast.globals; *)
+  (* ast.globals <- (GText "extern void __VERIFIER_assume();") :: ast.globals; *)
   
   let fn = transform_s ast.fileName sids_s xinfo in
 
