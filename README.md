@@ -1,1 +1,1 @@
-See the wiki page at https://bitbucket.org/nguyenthanhvuh/ceti/wiki/Home
+See wiki page at https://bitbucket.org/nguyenthanhvuh/ceti/wiki/Home
