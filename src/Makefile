@@ -9,7 +9,7 @@ OCAMLOPT =  ocamlfind ocamlopt $(OCAML_OPTIONS)
 OCAMLDEP =  ocamldep $(OCAML_OPTIONS)
 OCAMLLEX =  ocamllex 
 
-all: ceti
+all: ceti instr
 
 # %.cmo: %.ml 
 # 	@if [ -f $*.mli -a ! -f $*.cmi ] ; then $(OCAMLC) -c -g $*.mli ; fi 
@@ -30,9 +30,23 @@ all: ceti
 # NOTE: Module order is important!  OCaml module dependencies cannot
 # be cyclic, and the order presented must respect the dependency order.
 
+INSTR_MODULES = \
+	vu_common.cmo\
+	cil_common.cmo\
+	settings.cmo\
+	common.cmo\
+	fl.cmo\
+	instr.cmo\
+
+instr: $(INSTR_MODULES:.cmo=.cmx) 
+	$(OCAMLOPT) -o $@ unix.cmxa str.cmxa nums.cmxa cil.cmxa $^
+
+
 CETI_MODULES = \
 	vu_common.cmo\
 	cil_common.cmo\
+	settings.cmo\
+	common.cmo\
 	fl.cmo\
 	ceti.cmo \
 
@@ -46,4 +60,4 @@ ALL_MODULES =  $(MAIN_MODULES)
 -include $(ALL_MODULES:.cmo=.d)
 
 clean:
-	rm -f *.cmo *.cmi *.d *.cmx *.dx *.o ceti
+	rm -f *.cmo *.cmi *.d *.cmx *.dx *.o ceti instr

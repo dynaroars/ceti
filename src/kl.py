@@ -106,8 +106,7 @@ def worker_transform(wid, src, sids, tpl, xinfo, idxs):
     
     if vdebug: print ('worker {}: transform {} sids {} tpl {} xinfo {} idxs {} ***'
                       .format(wid, src,tpl,sids,xinfo,idxs))
-    cmd = ('./ceti {} '
-           '--only_transform --sids "{}" --tpl {} --idxs "{}" --xinfo {}{}'
+    cmd = ('./instr {} --sids "{}" --tpl {} --idxs "{}" --xinfo {}{}'
            .format(src,sids,tpl,idxs,xinfo, 
                    " --debug" if vdebug else ""))
                    
