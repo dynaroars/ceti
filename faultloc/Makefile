@@ -10,7 +10,7 @@ OCAMLOPT =  ocamlfind ocamlopt $(OCAML_OPTIONS)
 OCAMLDEP =  ocamldep $(OCAML_OPTIONS)
 OCAMLLEX =  ocamllex 
 
-all: fl
+all: fl 
 
 %.cmx: %.ml 
 	@if [ -f $*.mli -a ! -f $*.cmi ] ; then $(OCAMLC) -c -g $*.mli ; fi 
@@ -30,13 +30,12 @@ FL_MODULES = \
 fl: $(FL_MODULES:.cmo=.cmx) 
 	$(OCAMLOPT) -o $@ unix.cmxa str.cmxa nums.cmxa cil.cmxa cil_common.cmx vu_common.cmx $^
 
-# FL_TEST_MODULES = \
-# 	ceti_common.cmo\
-# 	fl.cmo \
-# 	fl_test.cmo
+FL_TEST_MODULES = \
+	fl.cmo \
+	fl_test.cmo
 
-# fl_test: $(FL_TEST_MODULES:.cmo=.cmx) 
-# 	$(OCAMLOPT) -o $@ unix.cmxa str.cmxa nums.cmxa cil.cmxa vu_common.cmx $^
+fl_test: $(FL_TEST_MODULES:.cmo=.cmx) 
+	$(OCAMLOPT) -o $@ unix.cmxa str.cmxa nums.cmxa cil.cmxa vu_common.cmx $^
 
 
 # dependencies
@@ -45,4 +44,4 @@ ALL_MODULES =  $(MAIN_MODULES)
 -include $(ALL_MODULES:.cmo=.d)
 
 clean:
-	rm -f *.cmo *.cmi *.d *.cmx *.dx *.o fl
+	rm -f *.cmo *.cmi *.d *.cmx *.dx *.o fl fl_test

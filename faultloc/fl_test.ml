@@ -1,6 +1,6 @@
 open Cil
 open Vu_common
-open Ceti_common
+(*open Ceti_common*)
 open Fl
 module E = Errormsg
 module H = Hashtbl
