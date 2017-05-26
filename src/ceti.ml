@@ -182,8 +182,6 @@ let () = begin
     only_synthesis := L.length syn_sids > 0 ;
 
     let perform_s = ref "" in 
-    let sids:CC.sid_t list ref = ref [] in 
-
     if !only_synthesis then (
       perform_s := "Synthesis";
       ST.sids := syn_sids;
