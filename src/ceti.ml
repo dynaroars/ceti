@@ -225,7 +225,7 @@ let () = begin
 
     CC.ealert "Perform ** %s **" !perform_s;
 
-    let sids = !sids in
+    let sids = !ST.sids in
     if L.length sids = 0 then (CC.ealert "No suspicious stmts !"; exit 0);
     
     (*** transformation and bug fixing ***)
