@@ -14,7 +14,7 @@ module FL = Fl
 module CC = Cil_common
 module VC = Vu_common
 module ST = Settings
-module MC = Common
+module CM = Common
 	      
 (*filename formats*)
 let transform_s = P.sprintf "%s.s%s.%s.ceti.c" (*f.c.s5.z3_c2.ceti.c*)
@@ -105,7 +105,7 @@ let mk_main (main_fd:fundec) (mainQ_fd:fundec) (tcs:FL.testcase_t list)
   (*let klee_assert_zero:instr = CC.mk_call "__VERIFIER_error" [] in *)
   
   
-  let and_exps = MC.apply_binop LAnd exps in
+  let and_exps = CM.apply_binop LAnd exps in
   let reach_stmt = mkStmt (Instr([print_goal; klee_assert_zero])) in
   reach_stmt.labels <- [Label("ERROR",!currentLoc,false)];
   let if_skind = If(and_exps, 
@@ -168,12 +168,12 @@ let transform
   let (ast:file),(mainQ_fd:fundec),(tcs:FL.testcase_t list) =
     VC.read_file_bin (ST.ginfo_s filename) in
 
-  let main_fd = MC.find_fun ast "main" in 
+  let main_fd = CM.find_fun ast "main" in 
   let sid = L.hd sids in (*FIXME*)
   let sids_s = VC.string_of_ints ~delim:"_" sids in 
 
   (*modify stmt*)  
-  let cl = L.find (fun cl -> cl#cid = tpl_id ) MC.tpl_classes in 
+  let cl = L.find (fun cl -> cl#cid = tpl_id ) CM.tpl_classes in 
   let mk_instr:(instr-> varinfo list ref -> instr list ref -> instr) = 
     cl#mk_instr ast main_fd sid tpl_id idxs xinfo in
   

@@ -14,14 +14,14 @@ module FL = Fl
 module CC = Cil_common
 module VC = Vu_common
 module ST = Settings
-module MC = Common
+module CM = Common
 	      
 (* let forceOption (ao : 'a option) : 'a = *)
 (*   match ao with  | Some a -> a | None -> raise(Failure "forceOption") *)
 
 (*filename formats*)
 
-let group_sids (sids:CC.sid_t list) (l:MC.spy_t list): MC.spy_t list = 
+let group_sids (sids:CC.sid_t list) (l:CM.spy_t list): CM.spy_t list = 
 
   let l0,l1 = L.partition (fun (sids',_,_,_) -> 
 			   assert (L.length sids' = 1);
@@ -174,11 +174,11 @@ let () = begin
     CC.write_src (ast.fileName ^ ".preproc.c") ast;
 
     if !only_peek then (
-      ignore (visitCilFileSameGlobals ((new MC.peekVisitor) !ST.sids) ast);
+      ignore (visitCilFileSameGlobals ((new CM.peekVisitor) !ST.sids) ast);
       exit 0);
 
     (* determine if file contains synthesis stmts*)
-    let syn_sids = MC.find_synstmts ast in 
+    let syn_sids = CM.find_synstmts ast in 
     only_synthesis := L.length syn_sids > 0 ;
 
     let perform_s = ref "" in 
@@ -228,7 +228,7 @@ let () = begin
     
     (*** transformation and bug fixing ***)
     (* find mainQ *)
-    let mainQ_fd = MC.find_fun ast ST.mainfunname in
+    let mainQ_fd = CM.find_fun ast ST.mainfunname in
     
     if not !no_global_vars then (
       iterGlobals ast (function 
@@ -246,7 +246,7 @@ let () = begin
 			     (L.length sids) (VC.string_of_ints sids)
 			     (VC.string_of_ints !ST.tpl_ids);
 
-    let rs = L.map (MC.spy ast.fileName stmt_ht) sids in
+    let rs = L.map (CM.spy ast.fileName stmt_ht) sids in
     let rs' = L.filter (function |[] -> false |_ -> true) rs in
     let rs = L.flatten rs' in 
     CC.ealert "Spy: Got %d info from %d sids" (L.length rs) (L.length rs');
@@ -258,7 +258,7 @@ let () = begin
       else
 	rs
     in
-    let rs = L.map MC.string_of_spys rs in
+    let rs = L.map CM.string_of_spys rs in
 
     (*call Python script to do transformation*)
     let rs = String.concat "; " rs in
