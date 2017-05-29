@@ -62,32 +62,34 @@ end
   temp = mainQ(inp0,inp1,..);
   temp == outp
  *)
-let mk_main (main_fd:fundec) (mainQ_fd:fundec) (tcs:FL.testcase_t list) 
+let mkMain (mainFd:fundec) (mainQ_fd:fundec) (tcs:FL.testcase_t list) 
 	    (uks:varinfo list) (instrs1:instr list) :stmt list= 
+
+  let mainQ_typ:typ = match mainQ_fd.svar.vtype with 
+    |TFun(t,_,_,_) -> t
+    |_ -> E.s(E.error "%s is not fun typ %a\n" 
+		      mainQ_fd.svar.vname d_type mainQ_fd.svar.vtype)
+  in
+  (*mainQ_typ temp;*)
+  let temp:lval = var(makeTempVar mainFd mainQ_typ) in 
   
-  let rs = L.map (fun ((inps:FL.inp_t), outp) -> 
-		  let mainQ_typ:typ = match mainQ_fd.svar.vtype with 
-		    |TFun(t,_,_,_) -> t
-		    |_ -> E.s(E.error "%s is not fun typ %a\n" 
-				      mainQ_fd.svar.vname d_type mainQ_fd.svar.vtype)
-		  in
-		  
-		  (*mainQ_typ temp;*)
-		  let temp:lval = var(makeTempVar main_fd mainQ_typ) in 
-		  
-		  (*tmp = mainQ(inp, uks);*)
-		  let args_typs = L.map (fun vi -> vi.vtype) mainQ_fd.sformals in
-		  assert (L.length args_typs = L.length inps);
+  let args_typs = L.map (fun vi -> vi.vtype) mainQ_fd.sformals in
 
-		  let args = L.map2 (fun t x -> CC.const_exp_of_string t x) args_typs inps in 
-		  let i:instr = CC.mk_call ~ftype:mainQ_typ ~av:(Some temp) "mainQ" args in
-		  
-		  let e:exp = BinOp(Eq, 
-				    Lval temp, CC.const_exp_of_string mainQ_typ outp, 
-				    CC.boolTyp) in 
-		  i,e
-		 ) tcs in
 
+  let rs =
+    L.map (fun ((inps:FL.inp_t), outp) ->
+	   assert (L.length args_typs = L.length inps);		  
+	   (*tmp = mainQ(inp, uks);*)
+	   let args = L.map2 (fun t x ->
+			      CC.const_exp_of_string t x) args_typs inps in 
+	   let i:instr = CC.mkCall ~ftype:mainQ_typ ~av:(Some temp) "mainQ" args in
+	   let e:exp = BinOp(
+			   Eq, 
+			   Lval temp, CC.const_exp_of_string mainQ_typ outp, 
+			   CC.boolTyp) in 
+	   i,e
+	  ) tcs in
+  
   let instrs2, exps = L.split rs in 
 
   (*creates reachability "goal" stmt 
@@ -97,12 +99,12 @@ let mk_main (main_fd:fundec) (mainQ_fd:fundec) (tcs:FL.testcase_t list)
 	      fun vi -> vi.vname ^ (if vi.vtype = intType then " %d" else " %g")
 	    ) uks in
   let s = "GOAL: " ^ (String.concat ", " s) ^ "\n" in 
-  let print_goal:instr = CC.mk_call "printf" 
+  let print_goal:instr = CC.mkCall "printf" 
 				    (Const(CStr(s))::(L.map CC.exp_of_vi uks)) in 
   
   (*klee_assert(0);*)
-  let klee_assert_zero:instr = CC.mk_call "klee_assert" [zero] in
-  (*let klee_assert_zero:instr = CC.mk_call "__VERIFIER_error" [] in *)
+  let klee_assert_zero:instr = CC.mkCall "klee_assert" [zero] in
+  (*let klee_assert_zero:instr = CC.mkCall "__VERIFIER_error" [] in *)
   
   
   let and_exps = CM.apply_binop LAnd exps in
@@ -168,14 +170,14 @@ let transform
   let (ast:file),(mainQ_fd:fundec),(tcs:FL.testcase_t list) =
     VC.read_file_bin (ST.ginfo_s filename) in
 
-  let main_fd = CM.find_fun ast "main" in 
+  let mainFd = CM.find_fun ast "main" in 
   let sid = L.hd sids in (*FIXME*)
   let sids_s = VC.string_of_ints ~delim:"_" sids in 
 
   (*modify stmt*)  
   let cl = L.find (fun cl -> cl#cid = tpl_id ) CM.tpl_classes in 
   let mk_instr:(instr-> varinfo list ref -> instr list ref -> instr) = 
-    cl#mk_instr ast main_fd sid tpl_id idxs xinfo in
+    cl#mk_instr ast mainFd sid tpl_id idxs xinfo in
   
   let visitor = (new modStmtVisitor) sids (fun i -> mk_instr i) in
   visitCilFileSameGlobals (visitor:> cilVisitor) ast;
@@ -183,8 +185,8 @@ let transform
   if stat = "" then E.s(E.error "stmts [%s] not modified" sids_s);
   
   (*modify main*)
-  let main_stmts = mk_main main_fd mainQ_fd tcs uks instrs in
-  main_fd.sbody.bstmts <- main_stmts;
+  let main_stmts = mkMain mainFd mainQ_fd tcs uks instrs in
+  mainFd.sbody.bstmts <- main_stmts;
 
   (*add uk's to fun decls and fun calls*)
   let fiv = (new funInstrVisitor) uks in
@@ -260,7 +262,7 @@ let () = begin
       else raise (Arg.Bad "too many input args")
     in
     
-    let usage = P.sprintf "%s\nusage: ceti src in_file out_file [options]\n" version in
+    let usage = P.sprintf "%s\nusage: ceti src inile out_file [options]\n" version in
 
     Arg.parse (Arg.align arg_descrs) handle_arg usage;
     

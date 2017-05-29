@@ -257,8 +257,8 @@ class coverageVisitor = object(self)
   method private create_fprintf_stmt (sid : CC.sid_t) :stmt = 
   let str = P.sprintf "%d\n" sid in
   let stderr = CC.exp_of_vi stderr_vi in
-  let instr1 = CC.mk_call "fprintf" [stderr; Const (CStr(str))] in 
-  let instr2 = CC.mk_call "fflush" [stderr] in
+  let instr1 = CC.mkCall "fprintf" [stderr; Const (CStr(str))] in 
+  let instr2 = CC.mkCall "fflush" [stderr] in
   mkStmt (Instr([instr1; instr2]))
     
   method vblock b = 
@@ -368,7 +368,7 @@ object(self)
   let lhs = var(stderr_vi) in
   let arg1 = Const(CStr(filename_path)) in
   let arg2 = Const(CStr("ab")) in
-  let instr = CC.mk_call ~av:(Some lhs) "fopen" [arg1; arg2] in
+  let instr = CC.mkCall ~av:(Some lhs) "fopen" [arg1; arg2] in
   let new_s = mkStmt (Instr[instr]) in 
 
   let fd = getGlobInit ast in

@@ -40,7 +40,7 @@ type sid_t = int
 let mk_vi ?(ftype=TVoid []) fname: varinfo = makeVarinfo true fname ftype
 
 (*av = fname(args)*)
-let mk_call ?(ftype=TVoid []) ?(av=None) (fname:string) args : instr = 
+let mkCall ?(ftype=TVoid []) ?(av=None) (fname:string) args : instr = 
   let f = var(mk_vi ~ftype:ftype fname) in
   Call(av, Lval f, args, !currentLoc)
 
@@ -144,8 +144,8 @@ class coverageVisitor filter_f = object(self)
 
   method private create_fprintf_stmt (s: string) :stmt =
   let stderr = exp_of_vi stderr_vi in
-  let instr1 = mk_call "fprintf" [stderr; Const (CStr(s))] in
-  let instr2 = mk_call "fflush" [stderr] in
+  let instr1 = mkCall "fprintf" [stderr; Const (CStr(s))] in
+  let instr2 = mkCall "fflush" [stderr] in
   mkStmt (Instr([instr1; instr2]))
     
   method vblock b =
@@ -162,27 +162,27 @@ class coverageVisitor filter_f = object(self)
     ChangeDoChildrenPost(b, action)
 end
 
-let mk_coverage (ast:file) (filter_f:stmtkind -> bool) (filename_cov:string) (filename_path:string) =
+(* let mk_coverage (ast:file) (filter_f:stmtkind -> bool) (filename_cov:string) (filename_path:string) = *)
 
-  (*add printf stmts*)
-  visitCilFileSameGlobals ((new coverageVisitor) filter_f) ast;
+(*   (\*add printf stmts*\) *)
+(*   visitCilFileSameGlobals ((new coverageVisitor) filter_f) ast; *)
 
-  (*add to global
-    _coverage_fout = fopen("file.c.path", "ab");
-  *)
-  let new_global = GVarDecl(stderr_vi, !currentLoc) in
-  ast.globals <- new_global :: ast.globals;
+(*   (\*add to global *)
+(*     _coverage_fout = fopen("file.c.path", "ab"); *)
+(*   *\) *)
+(*   let new_global = GVarDecl(stderr_vi, !currentLoc) in *)
+(*   ast.globals <- new_global :: ast.globals; *)
 
-  let lhs = var(stderr_vi) in
-  let arg1 = Const(CStr(filename_path)) in
-  let arg2 = Const(CStr("ab")) in
-  let instr = mk_call ~av:(Some lhs) "fopen" [arg1; arg2] in
-  let new_s = mkStmt (Instr[instr]) in
+(*   let lhs = var(stderr_vi) in *)
+(*   let arg1 = Const(CStr(filename_path)) in *)
+(*   let arg2 = Const(CStr("ab")) in *)
+(*   let instr = mkCall ~av:(Some lhs) "fopen" [arg1; arg2] in *)
+(*   let new_s = mkStmt (Instr[instr]) in *)
 
-  let fd = getGlobInit ast in
-  fd.sbody.bstmts <- new_s :: fd.sbody.bstmts;
+(*   let fd = getGlobInit ast in *)
+(*   fd.sbody.bstmts <- new_s :: fd.sbody.bstmts; *)
   
-  write_src filename_cov  ast
+(*   write_src filename_cov  ast *)
 
 
 

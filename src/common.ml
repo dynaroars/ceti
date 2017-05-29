@@ -160,7 +160,7 @@ end
 (******************* Transforming File *******************)
 
 (* make unknown variables and their assumptions*)
-let mk_uk 
+let mkUk
       (uid:int) (uty:typ)
       (min_v:exp) (max_v:exp)
       (main_fd:fundec) 
@@ -175,23 +175,23 @@ let mk_uk
   let lv:lval = var vi in 
   
   (*klee_make_symbolic(&uk,sizeof(uk),"uk")*)
-  let mk_sym_instr:instr =
-    CC.mk_call "klee_make_symbolic"
+  let mkSymInstr:instr =
+    CC.mkCall "klee_make_symbolic"
   	       [mkAddrOf(lv); SizeOfE(Lval lv); Const (CStr vname)]
   in
   
       (* let mk_sym_instr:instr = *)
-  (*   CC.mk_call ~av:(Some lv) "__VERIFIER_nondet_int" [] in *)
+  (*   CC.mkCall ~av:(Some lv) "__VERIFIER_nondet_int" [] in *)
   
   
-  let klee_assert_lb:instr = CC.mk_call "klee_assume"
+  let klee_assert_lb:instr = CC.mkCall "klee_assume"
 					[BinOp(Le,min_v,Lval lv, CC.boolTyp)] in 
   
-  let klee_assert_ub:instr = CC.mk_call "klee_assume"
+  let klee_assert_ub:instr = CC.mkCall "klee_assume"
 					[BinOp(Le,Lval lv, max_v, CC.boolTyp)] in 
   
   vs := !vs@[vi];
-  instrs := !instrs@[mk_sym_instr;  klee_assert_lb; klee_assert_ub];
+  instrs := !instrs@[mkSymInstr;  klee_assert_lb; klee_assert_ub];
 
   vi 
 
@@ -300,7 +300,7 @@ class bugfixTemplate_CONSTS cname cid level = object(self)
     fun a_i uks instrs -> (
       let mk_exp (e:exp): exp = 
 	let new_uk uid uty min_v max_v= 
-	  mk_uk uid uty min_v max_v main_fd uks instrs 
+	  mkUk uid uty min_v max_v main_fd uks instrs 
 	in
 	let ctr = ref (L.length !uks) in
 	
@@ -393,7 +393,7 @@ class bugfixTemplate_OPS_PR cname cid level = object(self)
 
     fun a_i uks instrs -> (
       let mk_exp (e:exp): exp = 
-	let new_uk uid = mk_uk uid intType zero one main_fd uks instrs in
+	let new_uk uid = mkUk uid intType zero one main_fd uks instrs in
 
 	let ctr = ref 0 in
 	let rec find_ops e = match e with
@@ -414,8 +414,8 @@ class bugfixTemplate_OPS_PR cname cid level = object(self)
 		  let uks = L.map CC.exp_of_vi uks in 
 		  
 		  let xor_exp = apply_binop BXor uks in		  
-		  let klee_assert_xor:instr = CC.mk_call "klee_assume" [xor_exp] in
-		  (*let klee_assert_xor:instr = CC.mk_call "__VERIFIER_assume" [xor_exp] in*)
+		  let klee_assert_xor:instr = CC.mkCall "klee_assume" [xor_exp] in
+		  (*let klee_assert_xor:instr = CC.mkCall "__VERIFIER_assume" [xor_exp] in*)
 		  instrs := !instrs@[klee_assert_xor];
 		  
 		  apply_bops e1 e2 uks bops
@@ -633,7 +633,7 @@ class bugfixTemplate_VS cname cid level = object(self)
     fun a_i uks instrs -> (
       let mk_exp ty = 
 	let new_uk uid uty min_v max_v = 
-	  mk_uk uid uty min_v max_v main_fd uks instrs 
+	  mkUk uid uty min_v max_v main_fd uks instrs 
 	in
 	let n_uks = succ (L.length vs) in
 	
