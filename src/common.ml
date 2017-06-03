@@ -92,7 +92,7 @@ class findBoolVars (bvs:varinfo list ref) = object
 
 end
 
-let find_boolvs fd = 
+let findBoolvs fd = 
   let bvs:varinfo list ref = ref [] in
   ignore (visitCilFunction ((new findBoolVars) bvs) fd);
   L.rev !bvs
@@ -590,7 +590,7 @@ class bugfixTemplate_VS cname cid level = object(self)
 	 : (instr -> spy_t option) = function
 
     |Set _ ->
-      let bvs = find_boolvs fd in (*Find vars in sfd have type bool*)
+      let bvs = findBoolvs fd in (*Find vars in sfd have type bool*)
 
       (*obtain usuable variables from fd*)
       let vs' = fd.sformals@fd.slocals in

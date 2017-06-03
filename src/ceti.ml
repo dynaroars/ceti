@@ -19,8 +19,6 @@ module CM = Common
 (* let forceOption (ao : 'a option) : 'a = *)
 (*   match ao with  | Some a -> a | None -> raise(Failure "forceOption") *)
 
-(*filename formats*)
-
 let group_sids (sids:CC.sid_t list) (l:CM.spy_t list): CM.spy_t list = 
 
   let l0,l1 = L.partition (fun (sids',_,_,_) -> 
