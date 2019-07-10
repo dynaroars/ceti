@@ -158,8 +158,6 @@ object (self)
 end
   
 
-
-(*runs in parallel*)
 let transform 
       (filename:string) 
       (sids:CC.sid_t list) 

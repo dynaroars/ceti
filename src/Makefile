@@ -2,7 +2,7 @@ OCAML_OPTIONS = \
 -I $(CIL173)/_build/src \
 -I $(CIL173)/_build/src/ext \
 -I $(CIL173)/_build/src/frontc \
--I $(CIL173)/_build/ocamlutil \
+-I $(CIL173)/_build/src/ocamlutil \
 
 OCAMLC =    ocamlfind  ocamlc   $(OCAML_OPTIONS)
 OCAMLOPT =  ocamlfind ocamlopt $(OCAML_OPTIONS)
