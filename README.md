@@ -6,7 +6,7 @@ CETI (Correcting Errors using Test-input) is an automatic program repair techniq
 The source code of CETI is released under the BSD license and can be obtained using the command 
 
 ```
-git clone https://nguyenthanhvuh@gitlab.org/nguyenthanhvuh/ceti.git
+git clone https://github.com/unsat/ceti.git
 ```
 
 CETI uses Ocaml/CIL to parse and operate over C programs, and Python to invoke the test-input generator KLEE.  CETI has been tested using the following setup:
