@@ -181,7 +181,8 @@ let exec_cmd cmd =
 
 
 (*commands*)
-let gcc_cmd = P.sprintf "gcc %s -o %s >& /dev/null"
+(*let gcc_cmd = P.sprintf "gcc %s -o %s >& /dev/null"*)
+let gcc_cmd = P.sprintf "gcc %s -o %s > /dev/null 2>&1"
 
 (*gcc filename.c;  return "filename.exe" if success else None*)
 let compile (src:string): string = 

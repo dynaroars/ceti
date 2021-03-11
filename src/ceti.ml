@@ -162,8 +162,7 @@ let () = begin
     let tcObj = (new FL.uTest) filename in
     tcObj#get_tcs inputs outputs;
     
-    let ast = Frontc.parse filename () in 
-
+    let ast = Frontc.parse filename () in
     visitCilFileSameGlobals (new CC.everyVisitor) ast;
     visitCilFileSameGlobals (new FL.breakCondVisitor :> cilVisitor) ast;
 

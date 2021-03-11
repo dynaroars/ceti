@@ -136,7 +136,8 @@ let run_testscript (testscript:string) (prog:string) (prog_output:string) =
   (try Unix.unlink prog_output with _ -> () ) ; 
 
   let prog = P.sprintf "%s" prog in (*"./%s"*)
-  let cmd = P.sprintf "/bin/bash %s %s %s &> /dev/null" testscript prog prog_output in
+  (*let cmd = P.sprintf "/bin/bash %s %s %s &> /dev/null" testscript prog prog_output in*)
+  let cmd = P.sprintf "/bin/bash %s %s %s > /dev/null 2>&1" testscript prog prog_output in
   exec_cmd cmd
 
 
@@ -255,12 +256,12 @@ class coverageVisitor = object(self)
   inherit nopCilVisitor
 
   method private create_fprintf_stmt (sid : CC.sid_t) :stmt = 
-  let str = P.sprintf "%d\n" sid in
-  let stderr = CC.exp_of_vi stderr_vi in
-  let instr1 = CC.mkCall "fprintf" [stderr; Const (CStr(str))] in 
-  let instr2 = CC.mkCall "fflush" [stderr] in
-  mkStmt (Instr([instr1; instr2]))
-    
+    let str = P.sprintf "%d\n" sid in
+    let stderr = CC.exp_of_vi stderr_vi in
+    let instr1 = CC.mkCall "fprintf" [stderr; Const (CStr(str))] in 
+    let instr2 = CC.mkCall "fflush" [stderr] in
+    mkStmt (Instr([instr1; instr2]))
+  
   method vblock b = 
     let action (b: block) :block= 
       let insert_printf (s: stmt): stmt list = 
@@ -361,10 +362,17 @@ object(self)
 
   (*add to global
     _coverage_fout = fopen("file.c.path", "ab");
-  *)
-  let new_global = GVarDecl(stderr_vi, !currentLoc) in
-  ast.globals <- new_global :: ast.globals;
+   *)
 
+  (* let includes = ["stdio.h"] in 
+   * let includes = L.map(fun x -> "#include \"" ^ x ^ "\"") includes in
+   * let adds:string = String.concat "\n" includes in *)
+
+  let adds:string = "extern void* (fopen)() ;\n" in 
+  let new_global:Cil.global = GVarDecl(stderr_vi, !currentLoc) in
+  (*let new_global = (GText adds):: new_global in *)
+  ast.globals <- [(GText adds); new_global] @ ast.globals;
+  (*(GText adds);*)
   let lhs = var(stderr_vi) in
   let arg1 = Const(CStr(filename_path)) in
   let arg2 = Const(CStr("ab")) in
